@@ -66,10 +66,10 @@ def test_parse_damaged_mail_decodes_subject_and_financial_fields() -> None:
     assert parsed.warnings == ()
 
 
-def test_parse_lost_mail_keeps_generic_mou_asset_and_breakdown() -> None:
+def test_parse_lost_mail_keeps_mou_prefixed_asset_and_breakdown() -> None:
     data = _eml(
         "Trả lời: IT - Thông tin tài sản thất lạc - "
-        "DEMO-MOU-902 - demo.mouse - Đang làm việc",
+        "MOU16902 - demo.mouse - Đang làm việc",
         """
         Dear Demo Reviewer,
         Please confirm this synthetic record.
@@ -77,7 +77,7 @@ def test_parse_lost_mail_keeps_generic_mou_asset_and_breakdown() -> None:
         Asset Name Product Name Domain Ngày bắt đầu sử dụng Ngày thất lạc/mất
         Nguyên giá ban đầu Mức khấu hao sử dụng còn lại Phí đền bù trách nhiệm
         Tổng số tiền đền bù
-        DEMO-MOU-902 Demo Wireless Pointer demo.mouse 06/04/2026 04/08/2026
+        MOU16902 Demo Wireless Pointer demo.mouse 06/04/2026 04/08/2026
         345,678 234,567 12,345 246,912
 
         Total:
@@ -91,7 +91,7 @@ def test_parse_lost_mail_keeps_generic_mou_asset_and_breakdown() -> None:
     parsed = EmlParser().parse_bytes(data)
 
     assert parsed.case_type == "LOST"
-    assert parsed.asset_code == "DEMO-MOU-902"
+    assert parsed.asset_code == "MOU16902"
     assert parsed.domain == "demo.mouse"
     assert parsed.employee_name == "Demo Mouse User"
     assert parsed.asset_name == "Demo Wireless Pointer"

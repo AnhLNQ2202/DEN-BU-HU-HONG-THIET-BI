@@ -5,6 +5,7 @@ venv
 .pytest_cache
 .ruff_cache
 .mypy_cache
+*.inspect.ndjson
 .codex-temp
 **/__pycache__
 **/*.py[cod]
@@ -54,6 +55,7 @@ chungtu_pdf
 
 # Deliberately sanitised application template required at runtime.
 !src/asset_compensation/templates/accounting_import_template.xlsx
+!src/asset_compensation/templates/tran_compensation_template.xlsx
 
 # Generated frontend and local QA artifacts.
 frontend/node_modules

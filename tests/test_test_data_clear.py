@@ -84,10 +84,9 @@ def test_test_data_clear_is_disabled_by_default(tmp_path: Path) -> None:
             "/api/test-data/clear", json=_CONFIRMATION, headers=_ACTION_HEADERS
         )
 
-        assert dashboard["capabilities"] == {
-            "test_reset": False,
-            "demo_reset": False,
-        }
+        assert dashboard["capabilities"]["test_reset"] is False
+        assert dashboard["capabilities"]["demo_reset"] is False
+        assert dashboard["capabilities"]["raw_eml_retention"] is False
         assert response.status_code == 400
         assert "disabled" in response.get_json()["error"]
     finally:
@@ -125,6 +124,11 @@ def test_test_data_clear_removes_only_owned_records_and_named_outputs(
     orphan = settings.output_dir / "unreferenced-output.xlsx"
     inbox_file = settings.inbox_dir / "inbox-sentinel.eml"
     reference_sentinel = settings.reference_dir / "reference-sentinel.txt"
+    retained_digest = "a" * 64
+    retained_shard = settings.mail_artifact_dir / retained_digest[:2]
+    retained_shard.mkdir(parents=True)
+    retained_artifact = retained_shard / f"{retained_digest}.eml"
+    retained_artifact.write_bytes(b"synthetic previously retained email")
     output.write_bytes(b"synthetic generated output")
     orphan.write_bytes(b"must remain")
     inbox_file.write_bytes(b"must remain")
@@ -151,12 +155,14 @@ def test_test_data_clear_removes_only_owned_records_and_named_outputs(
     assert payload["output_file_count"] == 1
     assert payload["supplier_record_count"] == 2
     assert payload["supplier_version_count"] == 1
+    assert payload["mail_artifact_count"] == 1
     assert service.summary().total == 0
     assert repository.list_batches() == []
     assert not output.exists()
     assert orphan.read_bytes() == b"must remain"
     assert inbox_file.read_bytes() == b"must remain"
     assert reference_sentinel.read_text("utf-8") == "must remain"
+    assert not retained_artifact.exists()
     assert settings.supplier_file.read_text("utf-8") == "external supplier sentinel"
     assert settings.accounting_template.read_bytes() == b"external template sentinel"
     assert reset_app.extensions["asset_hub"]["supplier_upload_service"].status()[

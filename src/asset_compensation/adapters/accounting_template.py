@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
 from openpyxl.utils.cell import get_column_letter, range_boundaries
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -99,7 +100,16 @@ class _PreparedCase:
     description: str
     amount: Decimal
     debit_gl: str
-    credit_lines: tuple[tuple[str, Decimal], ...]
+    credit_lines: tuple[_CreditLine, ...]
+    prepayment_highlight: str | None
+    inactive: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _CreditLine:
+    account: str
+    amount: Decimal
+    highlight: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,19 +200,20 @@ def _credit_lines(
     amount: Decimal,
     fallback_credit: str,
     debit_gl: str,
-) -> tuple[tuple[str, Decimal], ...]:
+) -> tuple[_CreditLine, ...]:
     if raw_lines in (None, ""):
-        return ((fallback_credit, amount),)
+        return (_CreditLine(fallback_credit, amount),)
     if not isinstance(raw_lines, (list, tuple)):
         raise AccountingValidationError(
             "credit_lines must be a list of account/amount pairs"
         )
 
-    lines: list[tuple[str, Decimal]] = []
+    lines: list[_CreditLine] = []
     for index, raw_line in enumerate(raw_lines, start=1):
         if isinstance(raw_line, Mapping):
             raw_account = raw_line.get("account", raw_line.get("gl"))
             raw_amount = raw_line.get("amount")
+            raw_highlight = raw_line.get("highlight")
         else:
             try:
                 raw_account, raw_amount = raw_line
@@ -210,6 +221,7 @@ def _credit_lines(
                 raise AccountingValidationError(
                     f"Invalid credit line at position {index}"
                 ) from exc
+            raw_highlight = None
         account = _gl_account(
             raw_account,
             field_name=f"credit_lines[{index}].account",
@@ -223,11 +235,16 @@ def _credit_lines(
             field_name=f"credit_lines[{index}].amount",
         )
         assert line_amount is not None
-        lines.append((account, line_amount))
+        highlight = str(raw_highlight or "").strip().casefold() or None
+        if highlight not in {None, "yellow", "green"}:
+            raise AccountingValidationError(
+                f"Invalid credit line highlight at position {index}"
+            )
+        lines.append(_CreditLine(account, line_amount, highlight))
 
     if not lines:
         raise AccountingValidationError("At least one credit line is required")
-    line_total = sum((line_amount for _, line_amount in lines), Decimal(0))
+    line_total = sum((line.amount for line in lines), Decimal(0))
     if line_total != amount:
         raise AccountingValidationError("Credit lines do not reconcile to case amount")
     return tuple(lines)
@@ -266,6 +283,19 @@ def _apply_archetype(sheet: Worksheet, row: int, archetype: _RowArchetype) -> No
         target.value = None
         target.comment = None
         target.hyperlink = None
+
+
+def _apply_highlight(sheet: Worksheet, row: int, highlight: str | None) -> None:
+    colors = {"yellow": "FFFF00", "green": "92D050"}
+    if highlight is None:
+        return
+    try:
+        color = colors[highlight]
+    except KeyError as exc:
+        raise AccountingValidationError(f"Unsupported row highlight: {highlight}") from exc
+    fill = PatternFill(fill_type="solid", fgColor=color)
+    for column in range(1, len(ACCOUNTING_TEMPLATE_HEADERS) + 1):
+        sheet.cell(row, column).fill = copy(fill)
 
 
 def _atomic_commit(temp_path: Path, destination: Path, *, overwrite: bool) -> None:
@@ -440,6 +470,12 @@ class AccountingTemplateAdapter:
                     f"Trừ lương {domain}{inactive_note} đền bù do hư hỏng "
                     f"tài sản {asset_code}, {repair_text}"
                 )
+        inactive = bool(metadata.get("employee_inactive") or metadata.get("inactive"))
+        prepayment_highlight = (
+            str(metadata.get("prepayment_highlight") or "").strip().casefold() or None
+        )
+        if prepayment_highlight not in {None, "yellow", "green"}:
+            raise AccountingValidationError("Invalid prepayment_highlight")
         return _PreparedCase(
             case_id=case_id,
             case_type=case_type,
@@ -450,6 +486,8 @@ class AccountingTemplateAdapter:
             amount=amount,
             debit_gl=debit_gl,
             credit_lines=credit_lines,
+            prepayment_highlight=prepayment_highlight,
+            inactive=inactive,
         )
 
     def _select_sheet(self, workbook: Any) -> Worksheet:
@@ -544,6 +582,11 @@ class AccountingTemplateAdapter:
             invoice_numbers.extend((prepayment_number, credit_number))
 
             _apply_archetype(sheet, row, prepayment)
+            _apply_highlight(
+                sheet,
+                row,
+                case.prepayment_highlight or ("yellow" if case.inactive else None),
+            )
             self._write_mapped_row(
                 sheet,
                 row,
@@ -567,11 +610,16 @@ class AccountingTemplateAdapter:
             )
             row += 1
 
-            for line_number, (credit_gl, line_amount) in enumerate(
+            for line_number, credit_line in enumerate(
                 case.credit_lines,
                 start=1,
             ):
                 _apply_archetype(sheet, row, credit)
+                _apply_highlight(
+                    sheet,
+                    row,
+                    credit_line.highlight or ("yellow" if case.inactive else None),
+                )
                 self._write_mapped_row(
                     sheet,
                     row,
@@ -586,8 +634,8 @@ class AccountingTemplateAdapter:
                         "Head Description": case.description,
                         "Line Description": case.description,
                         "Line Num": line_number,
-                        "Line Amount": -int(line_amount),
-                        "Code Combination": _safe_text(credit_gl),
+                        "Line Amount": -int(credit_line.amount),
+                        "Code Combination": _safe_text(credit_line.account),
                         "Supplier Name": case.supplier_name,
                         "Batch Name": _safe_text(batch_name),
                         "Org Id": self._org_id,
@@ -651,7 +699,7 @@ class AccountingTemplateAdapter:
                 f"Source total {source_total} does not match expected total {expected}"
             )
         credit_total = sum(
-            (line_amount for case in prepared for _, line_amount in case.credit_lines),
+            (line.amount for case in prepared for line in case.credit_lines),
             Decimal(0),
         )
         if credit_total != source_total:

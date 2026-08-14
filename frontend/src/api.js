@@ -14,6 +14,112 @@ function normalizeWarnings(value) {
     .filter(Boolean);
 }
 
+function safeApiDownloadUrl(value) {
+  const url = String(value || "").trim();
+  return url.startsWith("/api/") && !url.startsWith("//") ? url : null;
+}
+
+function normalizeSourceEml(raw = {}) {
+  const metadata = raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {};
+  const source = raw.source_eml && typeof raw.source_eml === "object" ? raw.source_eml : {};
+  const handle = String(
+    source.handle ?? raw.mail_artifact_handle ?? metadata.mail_artifact_handle ?? "",
+  ).trim();
+  if (!/^eml-sha256-[0-9a-f]{64}$/.test(handle)) return null;
+  return {
+    handle,
+    filename: String(
+      source.filename
+        ?? raw.mail_artifact_filename
+        ?? metadata.mail_artifact_filename
+        ?? "source.eml",
+    ).trim() || "source.eml",
+    download_url: safeApiDownloadUrl(source.download_url),
+  };
+}
+
+function normalizeIndividualMailPdf(raw = {}) {
+  return {
+    ...raw,
+    output_id: String(raw.output_id || "").trim(),
+    download_url: safeApiDownloadUrl(raw.download_url),
+  };
+}
+
+function normalizeMailPdfBatch(raw = {}) {
+  return {
+    ...raw,
+    batch_id: String(raw.batch_id || "").trim(),
+    merged_download_url: safeApiDownloadUrl(raw.merged_download_url),
+    warnings: normalizeWarnings(raw.warnings),
+    items: Array.isArray(raw.items)
+      ? raw.items.map((item, index) => ({
+        ...item,
+        index: toNumber(item?.index, index + 1),
+        source_pages: toNumber(item?.source_pages),
+        output_pages: toNumber(item?.output_pages),
+        padded_pages: toNumber(item?.padded_pages),
+        truncated_pages: toNumber(item?.truncated_pages),
+        warnings: normalizeWarnings(item?.warnings),
+        download_url: safeApiDownloadUrl(item?.download_url),
+      }))
+      : [],
+  };
+}
+
+function normalizeReferenceItem(raw = {}) {
+  const source = ["uploaded", "configured"].includes(raw?.source) ? raw.source : null;
+  return {
+    configured: raw?.configured === true,
+    available: raw?.available === true,
+    source,
+  };
+}
+
+function normalizeTranReferenceStatus(raw = {}) {
+  const status = raw?.status && typeof raw.status === "object" ? raw.status : raw;
+  return {
+    fa_gl: normalizeReferenceItem(status?.fa_gl),
+    ccdc: normalizeReferenceItem(status?.ccdc),
+    managed_updated_at: status?.managed_updated_at || null,
+  };
+}
+
+function normalizeTranResolution(raw = {}) {
+  return {
+    asset: raw?.asset && typeof raw.asset === "object" ? raw.asset : null,
+    preview: raw?.preview && typeof raw.preview === "object" ? raw.preview : null,
+    notes: normalizeWarnings(raw?.notes),
+    issues: normalizeWarnings(raw?.issues),
+    fa_status: String(raw?.fa_status || "").trim().toUpperCase(),
+    classification_status: String(raw?.classification_status || "").trim().toUpperCase(),
+    ready: raw?.ready === true,
+  };
+}
+
+function normalizeTranResolve(raw = {}) {
+  return {
+    ...raw,
+    ready: raw?.ready === true,
+    review_required: raw?.review_required === true,
+    results: Array.isArray(raw?.results) ? raw.results.map(normalizeTranResolution) : [],
+    mail_table_html: typeof raw?.mail_table_html === "string" ? raw.mail_table_html : null,
+  };
+}
+
+function normalizeTranOutput(raw = {}) {
+  return {
+    ...raw,
+    output_id: /^[0-9a-f]{32}$/.test(String(raw?.output_id || ""))
+      ? String(raw.output_id)
+      : "",
+    download_url: safeApiDownloadUrl(raw?.download_url),
+    workbook_download_url: safeApiDownloadUrl(raw?.workbook_download_url),
+    draft_download_url: safeApiDownloadUrl(raw?.draft_download_url),
+    sent: raw?.sent === true,
+  };
+}
+
 export function normalizeCase(raw = {}, index = 0) {
   const apiId = raw.id ?? raw.case_id ?? `CASE-${index + 1}`;
   return {
@@ -36,6 +142,7 @@ export function normalizeCase(raw = {}, index = 0) {
     supplier_name: String(raw.supplier_name ?? "").trim(),
     warnings: normalizeWarnings(raw.warnings),
     source_file: String(raw.source_file ?? raw.email_file ?? "").trim(),
+    source_eml: normalizeSourceEml(raw),
     metadata: raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {},
     created_at: raw.created_at ?? null,
     updated_at: raw.updated_at ?? null,
@@ -143,9 +250,22 @@ export function normalizeDashboard(payload) {
     issues,
     batches: Array.isArray(root.batches) ? root.batches.map(normalizeBatch) : [],
     summary: normalizeSummary(root.summary || {}, cases, issues),
+    retained_source_count: toNumber(root.retained_source_count),
     capabilities: {
+      ...(root.capabilities || {}),
       test_reset: root.capabilities?.test_reset === true,
       demo_reset: root.capabilities?.demo_reset === true,
+      raw_eml_retention: root.capabilities?.raw_eml_retention === true,
+      source_eml_download: root.capabilities?.source_eml_download === true,
+      tran_reference_upload: root.capabilities?.tran_reference_upload === true,
+      tran_lookup: root.capabilities?.tran_lookup === true,
+      tran_workbook_export: root.capabilities?.tran_workbook_export === true,
+      tran_draft: root.capabilities?.tran_draft === true,
+      mail_pdf_individual: root.capabilities?.mail_pdf_individual === true,
+      mail_pdf_batch: root.capabilities?.mail_pdf_batch === true,
+      mail_pdf_backend: ["word-windows", "weasyprint-cloud"].includes(
+        root.capabilities?.mail_pdf_backend,
+      ) ? root.capabilities.mail_pdf_backend : null,
     },
   };
 }
@@ -278,6 +398,79 @@ export const dashboardApi = {
       headers: { ...options.headers, "X-Asset-Hub-Upload": "email-v1" },
     });
   },
+  tranReferenceStatus: (signal) => request(API.tranReferenceStatus, { signal })
+    .then(normalizeTranReferenceStatus),
+  uploadTranReferences: (faGlFile, ccdcFile, clearCcdc = false, options = {}) => {
+    const formData = new FormData();
+    formData.append("fa_gl_file", faGlFile, faGlFile.name);
+    if (ccdcFile) formData.append("ccdc_file", ccdcFile, ccdcFile.name);
+    if (clearCcdc) formData.append("clear_ccdc", "true");
+    return uploadMultipart(API.tranReferenceUpload, formData, {
+      ...options,
+      headers: { ...options.headers, "X-Asset-Hub-Upload": "tran-reference-v1" },
+    }).then((raw) => ({
+      ...raw,
+      status: normalizeTranReferenceStatus(raw?.status),
+    }));
+  },
+  resolveTranAssets: (assets, signal) => request(API.tranResolve, {
+    method: "POST",
+    signal,
+    body: { assets },
+  }).then(normalizeTranResolve),
+  exportTranWorkbook: (assets, processingDate, yearSheet, signal) => request(
+    API.tranWorkbooks,
+    {
+      method: "POST",
+      signal,
+      body: {
+        assets,
+        ...(processingDate ? { processing_date: processingDate } : {}),
+        ...(yearSheet ? { year_sheet: yearSheet } : {}),
+      },
+    },
+  ).then(normalizeTranOutput),
+  createTranDraft: (
+    assets,
+    mailArtifactHandle,
+    bodyIntro,
+    processingDate,
+    yearSheet,
+    signal,
+  ) => request(API.tranDrafts, {
+    method: "POST",
+    signal,
+    body: {
+      assets,
+      mail_artifact_handle: mailArtifactHandle,
+      body_intro: bodyIntro,
+      ...(processingDate ? { processing_date: processingDate } : {}),
+      ...(yearSheet ? { year_sheet: yearSheet } : {}),
+    },
+  }).then(normalizeTranOutput),
+  createIndividualMailPdf: (mailArtifactHandle, signal) => request(API.mailPdfIndividual, {
+    method: "POST",
+    signal,
+    body: { mail_artifact_handle: mailArtifactHandle },
+  }).then(normalizeIndividualMailPdf),
+  createMailPdfBatch: (
+    mailArtifactHandles,
+    pagesPerMail,
+    overflowPolicy = "fail",
+    batchName = "",
+    signal,
+  ) => request(API.mailPdfBatches, {
+    method: "POST",
+    signal,
+    body: {
+      mail_artifact_handles: mailArtifactHandles,
+      pages_per_mail: pagesPerMail,
+      overflow_policy: overflowPolicy,
+      ...(String(batchName || "").trim()
+        ? { batch_name: String(batchName).trim().toUpperCase() }
+        : {}),
+    },
+  }).then(normalizeMailPdfBatch),
   clearTestData: () => request(API.clearTestData, {
     method: "POST",
     headers: { "X-Asset-Hub-Action": "clear-test-data-v1" },
@@ -289,9 +482,9 @@ export const dashboardApi = {
     body: { status },
   }),
   caseDetail: (caseId, signal) => request(`${API.cases}/${encodeURIComponent(caseId)}`, { signal }),
-  createBatch: (batchName, caseIds) => request(API.batches, {
+  createBatch: (batchName, caseIds, invoiceStart = 1) => request(API.batches, {
     method: "POST",
-    body: { batch_name: batchName, case_ids: caseIds },
+    body: { batch_name: batchName, case_ids: caseIds, invoice_start: invoiceStart },
   }),
   previewCompensation: (assets) => request(API.compensationPreview, {
     method: "POST",

@@ -39,6 +39,8 @@ def _request_asset(**overrides: object) -> dict[str, object]:
         "cost_center": "0603",
         "product_code": "000",
         "location": "01",
+        "physical": True,
+        "lookup_status": "MATCHED",
     }
     asset.update(overrides)
     return asset

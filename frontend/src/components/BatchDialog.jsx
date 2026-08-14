@@ -4,10 +4,20 @@ import { TYPE_META } from "../constants.js";
 import { formatCurrency, isValidBatchName, numberFormatter, suggestedBatchName } from "../utils.js";
 import { Icon } from "./Icon.jsx";
 
-export function BatchDialog({ open, cases, busy, initialBatchName, onClose, onCreate }) {
+export function BatchDialog({
+  open,
+  cases,
+  busy,
+  initialBatchName,
+  initialInvoiceStart = 1,
+  onClose,
+  onCreate,
+}) {
   const dialogRef = useRef(null);
   const [batchName, setBatchName] = useState(suggestedBatchName());
+  const [invoiceStart, setInvoiceStart] = useState("1");
   const [validation, setValidation] = useState("");
+  const [invoiceValidation, setInvoiceValidation] = useState("");
   const notReady = useMemo(() => cases.filter((item) => item.status !== "READY_FOR_ACCOUNTING"), [cases]);
   const totalAmount = useMemo(() => cases.reduce((sum, item) => sum + item.amount, 0), [cases]);
 
@@ -15,12 +25,14 @@ export function BatchDialog({ open, cases, busy, initialBatchName, onClose, onCr
     const dialog = dialogRef.current;
     if (open && dialog && !dialog.open) {
       setBatchName(initialBatchName || suggestedBatchName());
+      setInvoiceStart(String(initialInvoiceStart));
       setValidation("");
+      setInvoiceValidation("");
       dialog.showModal();
       window.requestAnimationFrame(() => dialog.querySelector("input")?.focus());
     }
     if (!open && dialog?.open) dialog.close();
-  }, [initialBatchName, open]);
+  }, [initialBatchName, initialInvoiceStart, open]);
 
   function submit(event) {
     event.preventDefault();
@@ -33,7 +45,16 @@ export function BatchDialog({ open, cases, busy, initialBatchName, onClose, onCr
       setValidation("Mọi hồ sơ phải ở trạng thái Sẵn sàng hạch toán.");
       return;
     }
-    onCreate(normalized, cases);
+    const parsedInvoiceStart = Number(invoiceStart);
+    if (
+      !Number.isInteger(parsedInvoiceStart)
+      || parsedInvoiceStart < 0
+      || parsedInvoiceStart > 999999
+    ) {
+      setInvoiceValidation("STT bắt đầu phải là số nguyên từ 0 đến 999999.");
+      return;
+    }
+    onCreate(normalized, cases, parsedInvoiceStart);
   }
 
   return (
@@ -49,6 +70,28 @@ export function BatchDialog({ open, cases, busy, initialBatchName, onClose, onCr
             <input id="batch-name" name="batch_name" type="text" inputMode="text" autoComplete="off" maxLength="9" pattern="GN2[0-9]{6}" placeholder="GN2250526" value={batchName} aria-describedby="batch-name-hint batch-name-error" aria-invalid={validation ? "true" : undefined} onChange={(event) => { setBatchName(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "")); setValidation(""); }} required />
             <span className="field-hint" id="batch-name-hint">Định dạng GN2 + DDMMYY, ví dụ GN2250526.</span>
             {validation && <span className="field-error" id="batch-name-error" role="alert">{validation}</span>}
+          </div>
+
+          <div className="form-field batch-invoice-start">
+            <label htmlFor="batch-invoice-start">STT bắt đầu</label>
+            <input
+              id="batch-invoice-start"
+              name="invoice_start"
+              type="number"
+              min="0"
+              max="999999"
+              step="1"
+              value={invoiceStart}
+              aria-describedby="batch-invoice-start-hint batch-invoice-start-error"
+              aria-invalid={invoiceValidation ? "true" : undefined}
+              onChange={(event) => {
+                setInvoiceStart(event.target.value);
+                setInvoiceValidation("");
+              }}
+              required
+            />
+            <span className="field-hint" id="batch-invoice-start-hint">Số thứ tự đầu tiên trong file ERP, từ 0 đến 999999.</span>
+            {invoiceValidation && <span className="field-error" id="batch-invoice-start-error" role="alert">{invoiceValidation}</span>}
           </div>
 
           <div className="batch-summary">

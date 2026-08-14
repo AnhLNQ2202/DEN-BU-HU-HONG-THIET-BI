@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ from openpyxl import load_workbook
 
 from asset_compensation.adapters import ACCOUNTING_TEMPLATE_HEADERS
 from asset_compensation.config import Settings
+from asset_compensation.domain import CaseType, ParsedCase
 from asset_compensation.web import create_app
 
 
@@ -74,6 +77,7 @@ def test_batch_export_is_balanced_downloadable_and_retry_safe(app: Flask) -> Non
 
     downloaded = client.get(batch["download_url"])
     assert downloaded.status_code == 200
+    assert downloaded.headers["Cache-Control"] == "private, no-store"
     assert downloaded.mimetype == (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
@@ -114,6 +118,98 @@ def test_batch_name_must_contain_a_real_date(app: Flask) -> None:
     assert "invalid calendar date" in response.get_json()["error"]
 
 
+def test_batch_uses_bounded_invoice_start_and_semantic_policy_resolution(
+    app: Flask,
+) -> None:
+    client = app.test_client()
+    ready_damaged = next(
+        case
+        for case in client.get("/api/dashboard").get_json()["cases"]
+        if case["status"] == "READY_FOR_ACCOUNTING" and case["case_type"] == "DAMAGED"
+    )
+
+    created = client.post(
+        "/api/batches",
+        json={
+            "batch_name": "GN2020226",
+            "case_ids": [ready_damaged["id"]],
+            "invoice_start": 0,
+        },
+    )
+
+    assert created.status_code == 201
+    batch = created.get_json()["batch"]
+    assert batch["metadata"]["invoice_start"] == 0
+    assert "ASSET_COMPENSATION_PREPAYMENT" in batch["metadata"][
+        "accounting_policy_keys"
+    ]
+    downloaded = client.get(batch["download_url"])
+    workbook = load_workbook(io.BytesIO(downloaded.data), read_only=True)
+    try:
+        assert workbook.active["B2"].value == "GN2020226000"
+        assert workbook.active["B3"].value == "GN2020226001"
+    finally:
+        workbook.close()
+
+
+def test_batch_rejects_unverified_repair_policy_before_writing_output(app: Flask) -> None:
+    extension = app.extensions["asset_hub"]
+    service = extension["case_service"]
+    candidate = next(
+        case for case in service.list_cases() if case.asset_code == "DEMO-PHO-009"
+    )
+    service.transition_status(candidate.id, "READY_FOR_ACCOUNTING", actor="synthetic-test")
+    before = tuple(extension["settings"].output_dir.iterdir())
+
+    response = app.test_client().post(
+        "/api/batches",
+        json={"batch_name": "GN2030226", "case_ids": [candidate.id]},
+    )
+
+    assert response.status_code == 400
+    assert "repair status" in response.get_json()["error"]
+    assert tuple(extension["settings"].output_dir.iterdir()) == before
+
+
+def test_batch_rejects_zero_value_case_without_publishing_output(app: Flask) -> None:
+    extension = app.extensions["asset_hub"]
+    service = extension["case_service"]
+    candidate = service.ingest_one(
+        ParsedCase(
+            case_type=CaseType.LOST,
+            domain="demo.zero",
+            employee_name="Synthetic Zero",
+            asset_code="DEMO-ZERO-001",
+            asset_name="Synthetic zero-value asset",
+            received_at=datetime(2026, 8, 14, tzinfo=UTC),
+            amount=0,
+            residual_value=0,
+            responsibility_fee=0,
+            supplier_number="SYN-000",
+            supplier_site="DEMO",
+            supplier_name="Synthetic Supplier",
+            source_file="synthetic-zero.eml",
+            source_id="synthetic-zero@example.invalid",
+            metadata={},
+        )
+    )
+    service.transition_status(
+        candidate.id,
+        "READY_FOR_ACCOUNTING",
+        actor="synthetic-test",
+    )
+    before = tuple(extension["settings"].output_dir.iterdir())
+
+    response = app.test_client().post(
+        "/api/batches",
+        json={"batch_name": "GN2040226", "case_ids": [candidate.id]},
+    )
+
+    assert response.status_code == 400
+    assert "greater than zero" in response.get_json()["error"]
+    assert tuple(extension["settings"].output_dir.iterdir()) == before
+
+
 def test_optional_shared_demo_auth_keeps_health_check_public(tmp_path: Path) -> None:
     protected = create_app(
         Settings(
@@ -125,7 +221,12 @@ def test_optional_shared_demo_auth_keeps_health_check_public(tmp_path: Path) -> 
     protected.config.update(TESTING=True)
     client = protected.test_client()
     try:
-        assert client.get("/api/health").status_code == 200
+        health = client.get("/api/health")
+        assert health.status_code == 200
+        assert health.get_json() == {
+            "ok": True,
+            "service": "asset-compensation-hub",
+        }
         denied = client.get("/")
         assert denied.status_code == 401
         assert denied.headers["WWW-Authenticate"].startswith("Basic")

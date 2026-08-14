@@ -70,15 +70,17 @@ X-Asset-Hub-Upload: email-v1
 Use the repeated multipart field `files`. The request accepts 1–20 `.eml`
 files, at most 2 MiB each and 25 MiB in aggregate. Files must have bounded RFC
 822 headers and a bounded MIME tree. Text and inline images are accepted;
-archives and other attachments are rejected. Raw EML bytes are not copied into
-application data or intentionally retained; the HTTP request layer may use
-temporary spooling which is closed after the request.
+archives and other attachments are rejected. Raw EML bytes are not retained by
+default. `ASSET_HUB_RETAIN_RAW_EML=true` explicitly enables private,
+content-addressed retention for source download, draft and PDF workflows; see
+[TRAN_API.md](TRAN_API.md).
 
-Uploaded source names are replaced with server-generated names such as
-`upload-01.eml`. Raw Subject, Sender, and Message-ID headers are not persisted
-for this upload path. The service keeps hashes of Message-ID and content so a
-reused Message-ID with different content is sent to manual review instead of
-silently overwriting a case.
+Uploaded ingestion source names are replaced with server-generated names such
+as `upload-01.eml`. Raw Subject, Sender, and Message-ID headers are not
+persisted as case metadata. When private retention is enabled, the case stores
+only an opaque hash handle and sanitized display basename. The service keeps
+hashes of Message-ID and content so a reused Message-ID with different content
+is sent to manual review instead of silently overwriting a case.
 
 ```json
 {
@@ -109,8 +111,9 @@ cleanup action. It sends `POST /api/test-data/clear` with header
 `X-Asset-Hub-Action: clear-test-data-v1` and the exact JSON body
 `{"confirm":"CLEAR_TEST_DATA"}`. The action removes application cases, status
 events, batches, their named output files, and the uploaded normalized Supplier
-reference. It is disabled by default and must not be enabled as a general
-production deletion API.
+reference. It also removes only app-managed Tran references, hash-named mail
+artifacts, and server-named Tran/PDF outputs. It is disabled by default and
+must not be enabled as a general production deletion API.
 
 ## Clear disposable test data
 

@@ -1,7 +1,15 @@
 """Pure input parsers."""
 
-from .contracts import CaseKind, ParsedCase, SupplierRecord
-from .eml import EmlParseError, EmlParser, decode_mime_header, parse_eml, parse_money
+from .contracts import CaseKind, CreditComponent, ParsedCase, SupplierRecord
+from .eml import (
+    EmlParseError,
+    EmlParser,
+    EmlSkipError,
+    decode_mime_header,
+    parse_eml,
+    parse_eml_many,
+    parse_money,
+)
 from .suppliers import (
     DuplicateSupplierDomainError,
     SupplierLoadError,
@@ -12,9 +20,11 @@ from .suppliers import (
 
 __all__ = [
     "CaseKind",
+    "CreditComponent",
     "DuplicateSupplierDomainError",
     "EmlParseError",
     "EmlParser",
+    "EmlSkipError",
     "ParsedCase",
     "SupplierLoadError",
     "SupplierRecord",
@@ -23,5 +33,6 @@ __all__ = [
     "load_supplier_records",
     "normalize_domain",
     "parse_eml",
+    "parse_eml_many",
     "parse_money",
 ]

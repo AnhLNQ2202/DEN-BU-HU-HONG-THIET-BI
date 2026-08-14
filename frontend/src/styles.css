@@ -858,7 +858,7 @@ label.small {
 }
 
 .upload-summary--email {
-  grid-template-columns: repeat(3, minmax(95px, 1fr));
+  grid-template-columns: repeat(4, minmax(95px, 1fr));
 }
 
 .upload-summary > div {
@@ -929,6 +929,107 @@ label.small {
   width: 70px !important;
 }
 
+.pdf-workspace {
+  display: grid;
+  gap: 11px;
+}
+
+.pdf-panel-heading,
+.pdf-selection-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pdf-panel-heading h3 {
+  margin: 0;
+}
+
+.pdf-capability-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--vng-blue-tint);
+  color: var(--vng-navy);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pdf-selection-heading {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pdf-artifact-list {
+  display: grid;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.pdf-artifact-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+}
+
+.pdf-artifact-row + .pdf-artifact-row {
+  border-top: 1px solid var(--border);
+}
+
+.pdf-artifact-select {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.pdf-artifact-select input {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  accent-color: var(--vng-orange);
+}
+
+.pdf-artifact-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.pdf-artifact-copy strong,
+.pdf-artifact-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-artifact-copy strong {
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.pdf-artifact-copy small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.pdf-controls {
+  margin-bottom: 0;
+  padding-top: 2px;
+}
+
+.pdf-result {
+  min-width: 0;
+}
+
 .disabled-note,
 .result-file {
   color: var(--muted);
@@ -979,6 +1080,214 @@ label.small {
   margin-bottom: 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.pdf-capability-badge.is-disabled {
+  background: var(--surface-alt);
+  color: var(--muted);
+}
+
+.tran-reference-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.tran-reference-card {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-alt);
+}
+
+.tran-reference-card span {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.tran-reference-card strong {
+  font-size: 12.5px;
+}
+
+.tran-reference-card.is-ready {
+  border-color: #b8dcc5;
+  background: #f1f8f2;
+  color: var(--success);
+}
+
+.tran-reference-card.is-missing {
+  border-color: #efd89b;
+  background: var(--vng-yellow-tint);
+  color: #6f5310;
+}
+
+.tran-reference-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px 14px;
+  margin-top: 12px;
+}
+
+.tran-reference-form > label:not(.checkbox-field) {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tran-reference-form input[type="file"] {
+  width: 100%;
+  min-height: 38px;
+}
+
+.tran-clear-reference {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tran-reference-form .upload-actions,
+.tran-reference-form .upload-progress {
+  align-self: end;
+}
+
+.tran-asset-editor-list,
+.tran-resolution-list {
+  display: grid;
+  gap: 12px;
+}
+
+.tran-asset-editor,
+.tran-resolution-item {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tran-asset-editor > header,
+.tran-resolution-item > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tran-asset-editor > header span,
+.tran-resolution-item > header span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tran-resolution-item .compensation-result-summary {
+  margin-bottom: 0;
+}
+
+.tran-output-section {
+  display: grid;
+  gap: 11px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.tran-output-section h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.tran-output-controls {
+  margin-bottom: 0;
+}
+
+.tran-draft-box {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-alt);
+}
+
+.tran-draft-box textarea {
+  width: 100%;
+  min-height: 96px;
+  padding: 9px;
+  resize: vertical;
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.tran-draft-box textarea:focus {
+  border-color: var(--vng-orange);
+  outline: 2px solid var(--vng-orange-tint);
+}
+
+.tran-notes {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--vng-blue-tint);
+  color: var(--vng-navy);
+  font-size: 12.5px;
+}
+
+.tran-notes ul,
+.compensation-reasons ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.tran-provenance code {
+  display: none;
+}
+
+.tran-provenance dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  margin: 8px 0 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--border);
+}
+
+.tran-provenance dl > div {
+  padding: 8px 9px;
+  background: #fff;
+}
+
+.tran-provenance dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tran-provenance dd {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.batch-invoice-start {
+  margin-top: 12px;
 }
 
 .compensation-panel,
@@ -1749,6 +2058,8 @@ label.small {
   }
 
   .supplier-file-grid,
+  .tran-reference-grid,
+  .tran-reference-form,
   .upload-summary,
   .upload-summary--email {
     grid-template-columns: 1fr;
@@ -1756,6 +2067,30 @@ label.small {
 
   .upload-actions .btn,
   .email-upload-row .btn {
+    width: 100%;
+  }
+
+  .pdf-artifact-row,
+  .pdf-panel-heading,
+  .pdf-selection-heading {
+    align-items: stretch;
+  }
+
+  .pdf-artifact-row {
+    flex-wrap: wrap;
+  }
+
+  .pdf-artifact-row > .mail-link {
+    margin-left: 26px;
+  }
+
+  .pdf-controls > input[type="text"],
+  .pdf-controls > select {
+    width: 100%;
+  }
+
+  .tran-output-controls > input,
+  .tran-output-controls > select {
     width: 100%;
   }
 

@@ -6,9 +6,25 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 CaseKind = Literal["DAMAGED", "LOST"]
+
+
+class CreditComponent(TypedDict):
+    """Configuration-neutral accounting component extracted from source mail.
+
+    Parsers retain the original allocation dimensions and exact amount, but do
+    not choose a real GL account.  A deployment-owned policy mapper is
+    responsible for turning ``policy_key`` and the dimensions into an account.
+    """
+
+    policy_key: str
+    amount: Decimal
+    cost_center: str
+    product_code: str
+    location: str
+    entity_non_vng: bool
 
 
 @dataclass(frozen=True, slots=True)

@@ -53,6 +53,11 @@ Blueprint thiết lập:
 | `GUNICORN_THREADS=4` | Cho phép nhiều request I/O trên một worker. |
 | `GUNICORN_TIMEOUT=120` | Giới hạn thời gian cho thao tác export. |
 
+Các biến FA&GL/CCDC, Tran template, opt-in EML retention, draft sender và policy
+GL được liệt kê trong [TRAN_API.md](TRAN_API.md). Không đưa đường dẫn local
+Windows hoặc GL vận hành vào Blueprint/commit; trên cloud nên upload reference
+synthetic qua UI hoặc mount một private data volume.
+
 Render tự cung cấp `PORT`; Docker command bind Gunicorn vào
 `0.0.0.0:$PORT`. Không tạo `PORT` thủ công.
 

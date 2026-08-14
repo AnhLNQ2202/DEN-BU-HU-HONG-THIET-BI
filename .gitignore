@@ -8,6 +8,7 @@ __pycache__/
 htmlcov/
 .ruff_cache/
 .mypy_cache/
+*.inspect.ndjson
 .venv/
 venv/
 .env
@@ -45,3 +46,4 @@ chungtu_pdf/
 !tests/fixtures/**/*.csv
 !examples/**/*.csv
 !src/asset_compensation/templates/accounting_import_template.xlsx
+!src/asset_compensation/templates/tran_compensation_template.xlsx

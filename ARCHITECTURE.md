@@ -55,6 +55,7 @@ creating another accounting candidate.
 
 - `GET /api/health`
 - `GET /api/dashboard`
+- `GET /api/capabilities`
 - `GET /api/cases`
 - `GET /api/cases/<case_id>`
 - `PATCH /api/cases/<case_id>/status`
@@ -64,6 +65,16 @@ creating another accounting candidate.
 - `POST /api/emails/upload`
 - `POST /api/test-data/clear` (explicitly enabled disposable staging only)
 - `POST /api/compensation/preview`
+- `GET /api/tran/references/status`
+- `POST /api/tran/references/upload`
+- `POST /api/tran/resolve`
+- `POST /api/tran/workbooks`
+- `GET /api/tran/workbooks/<output_id>/download`
+- `POST /api/tran/drafts`
+- `GET /api/tran/drafts/<output_id>/download`
+- `GET /api/mail-artifacts/<handle>/download`
+- `POST /api/mail-pdfs/individual`
+- `POST /api/mail-pdfs/batches`
 - `POST /api/batches`
 - `GET /api/batches/<batch_id>/download`
 - `POST /api/demo/reset`
@@ -75,6 +86,8 @@ directly. See
 preview contract and review states.
 See [docs/UPLOAD_API.md](docs/UPLOAD_API.md) for upload limits, collision
 handling, privacy guarantees and multipart contracts.
+See [docs/TRAN_API.md](docs/TRAN_API.md) for reference upload, Tran workbook,
+unsent draft, retained EML and PDF contracts.
 
 ## Growth path
 
