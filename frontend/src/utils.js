@@ -99,6 +99,7 @@ export function filterAndSortCases(cases, filters, sort) {
     .filter((caseItem) => {
       if (filters.type !== "ALL" && caseItem.case_type !== filters.type) return false;
       if (filters.status !== "ALL" && caseItem.status !== filters.status) return false;
+      if (filters.warning === "WARN" && !caseItem.warnings.length) return false;
       if (!query) return true;
       return normalizeSearch([
         caseItem.id,

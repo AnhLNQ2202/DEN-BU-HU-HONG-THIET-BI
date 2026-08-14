@@ -43,6 +43,7 @@ asset_compensation = [
   "web/static/dist/*.css",
   "web/static/dist/*.js",
   "web/static/dist/*.html",
+  "web/static/dist/assets/*",
   "templates/*.xlsx",
 ]
 

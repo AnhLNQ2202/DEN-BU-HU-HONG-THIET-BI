@@ -1,59 +1,57 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 
-import { Icon } from "./Icon.jsx";
-import { formatDate } from "../utils.js";
+import logoUrl from "../assets/vng-orange-compact.png";
+import { LANGUAGES, translate } from "../i18n.js";
 
-export function Topbar({ connection, updatedAt }) {
-  const connectionLabel = connection === "online"
-    ? "Đã kết nối"
-    : connection === "offline"
-      ? "Mất kết nối"
-      : "Đang kết nối";
+export function Topbar({ language, onLanguageChange }) {
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    function closeOnOutsideClick(event) {
+      if (!dropdownRef.current?.contains(event.target)) setOpen(false);
+    }
+    document.addEventListener("click", closeOnOutsideClick);
+    return () => document.removeEventListener("click", closeOnOutsideClick);
+  }, []);
 
   return (
-    <>
-      <a className="skip-link" href="#main-content">Bỏ qua đến nội dung chính</a>
-      <header className="topbar">
-        <div className="topbar__inner">
-          <a className="brand" href="/" aria-label="Asset Compensation Hub - Trang chủ">
-            <span className="brand__mark" aria-hidden="true">
-              <svg viewBox="0 0 32 32" focusable="false">
-                <path d="M7 23.5 16 5l9 18.5h-5.1L16 15l-3.9 8.5H7Z"/>
-                <circle cx="16" cy="25.5" r="2.5"/>
-              </svg>
-            </span>
-            <span><strong>Asset Compensation Hub</strong><small>IT Finance Operations</small></span>
-          </a>
-          <div className="topbar__meta">
-            <span className={`connection-pill ${connection === "online" ? "is-online" : connection === "offline" ? "is-offline" : ""}`} role="status">
-              <span className="connection-pill__dot" aria-hidden="true" />
-              <span>{connectionLabel}</span>
-            </span>
-            <span className="last-updated">{updatedAt ? `Đồng bộ ${formatDate(updatedAt, true)}` : "Chưa đồng bộ"}</span>
-          </div>
+    <header className="topbar">
+      <div className="brand">
+        <img src={logoUrl} alt="VNG" />
+        <span className="divider" aria-hidden="true" />
+        <h1>{translate(language, "title")}</h1>
+      </div>
+      <div className="lang-dropdown" ref={dropdownRef}>
+        <button
+          className="lang-toggle-btn"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={(event) => {
+            event.stopPropagation();
+            setOpen((current) => !current);
+          }}
+        >
+          <span>{LANGUAGES[language]}</span><span className="dropdown-arrow">▾</span>
+        </button>
+        <div className={`lang-menu ${open ? "open" : ""}`} role="menu">
+          {Object.entries(LANGUAGES).map(([value, label]) => (
+            <button
+              className={language === value ? "active-lang" : ""}
+              type="button"
+              role="menuitem"
+              key={value}
+              onClick={() => {
+                onLanguageChange(value);
+                setOpen(false);
+              }}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-      </header>
-
-    </>
-  );
-}
-
-export function Hero({ ingesting, resetting, onIngest, onReset }) {
-  return (
-    <section className="hero" aria-labelledby="page-title">
-      <div className="hero__copy">
-        <span className="eyebrow">Bàn điều phối nghiệp vụ</span>
-        <h1 id="page-title">Đền bù tài sản, rõ từng bước.</h1>
-        <p>Theo dõi hồ sơ hư hỏng và thất lạc, xử lý cảnh báo, rồi đóng batch hạch toán trong một luồng duy nhất.</p>
       </div>
-      <div className="hero__actions" aria-label="Thao tác nhanh">
-        <button className={`button button--secondary ${resetting ? "is-busy" : ""}`} type="button" disabled={resetting} aria-busy={resetting} onClick={onReset}>
-          <Icon name="reset" /> Đặt lại demo
-        </button>
-        <button className={`button button--primary ${ingesting ? "is-busy" : ""}`} type="button" disabled={ingesting} aria-busy={ingesting} onClick={onIngest}>
-          <Icon name="inbox" /> Nạp email mới
-        </button>
-      </div>
-    </section>
+    </header>
   );
 }

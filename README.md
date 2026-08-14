@@ -10,6 +10,9 @@ output contract.
 ## Why it matters
 
 - Detects `DAMAGED` and `LOST` cases from saved EML evidence.
+- Previews `LOST` compensation under the TranNNB/IT.POL.01 rules, with an
+  explicit `NEEDS_REVIEW` result whenever source data is incomplete or
+  ambiguous.
 - Keeps case state and status history in SQLite instead of rebuilding a log.
 - Surfaces blocking data-quality issues before accounting export.
 - Creates batches from explicitly selected, eligible cases.
@@ -22,7 +25,7 @@ output contract.
 ```text
 React dashboard -> Flask JSON API
     -> application services
-       -> domain model and transition policy
+       -> domain model, transition policy and compensation rules
           -> SQLite repository
           -> EML/Supplier parsers
           -> Excel/PDF/Outlook adapters
@@ -34,6 +37,10 @@ growth path.
 ## Quick start
 
 Requirements: Python 3.11+, Node.js 20+ and pnpm 11 (Corepack is fine).
+
+For a cross-platform team setup with hot reload, Dev Containers, Codex/Claude
+workflows and isolated cloud previews, see
+[docs/TEAM_DEVELOPMENT.md](docs/TEAM_DEVELOPMENT.md).
 
 ### Windows PowerShell
 

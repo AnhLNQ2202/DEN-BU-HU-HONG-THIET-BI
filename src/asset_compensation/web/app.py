@@ -19,7 +19,7 @@ from asset_compensation.domain import (
     ValidationError,
 )
 from asset_compensation.repositories import SQLiteCaseRepository
-from asset_compensation.services import CaseService
+from asset_compensation.services import CaseService, CompensationService
 
 from .routes import blueprint
 
@@ -45,6 +45,7 @@ def create_app(settings: Settings | None = None) -> Flask:
         "settings": settings,
         "repository": repository,
         "case_service": service,
+        "compensation_service": CompensationService(),
     }
     atexit.register(repository.close)
 
