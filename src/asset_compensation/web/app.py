@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import secrets
+from threading import RLock
 from typing import Any
 
 from flask import Flask, Response, jsonify, request
@@ -19,7 +20,9 @@ from asset_compensation.domain import (
     ValidationError,
 )
 from asset_compensation.repositories import SQLiteCaseRepository
-from asset_compensation.services import CaseService, CompensationService
+from asset_compensation.services import CaseService, CompensationService, TestDataService
+from asset_compensation.services.email_upload_service import EmailUploadService
+from asset_compensation.services.supplier_upload_service import SupplierUploadService
 
 from .routes import blueprint
 
@@ -36,16 +39,27 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.config.update(
         SECRET_KEY=settings.secret_key,
         JSON_SORT_KEYS=False,
-        MAX_CONTENT_LENGTH=25 * 1024 * 1024,
+        # Supplier pairs allow 48 MiB of file bytes plus multipart framing.
+        MAX_CONTENT_LENGTH=52 * 1024 * 1024,
     )
 
     repository = SQLiteCaseRepository(settings.database_path)
     service = CaseService(repository)
+    supplier_upload_service = SupplierUploadService(settings.reference_dir)
     app.extensions["asset_hub"] = {
         "settings": settings,
         "repository": repository,
         "case_service": service,
         "compensation_service": CompensationService(),
+        "mutation_lock": RLock(),
+        "supplier_upload_service": supplier_upload_service,
+        "email_upload_service": EmailUploadService(),
+        "test_data_service": TestDataService(
+            settings,
+            repository,
+            service,
+            supplier_upload_service,
+        ),
     }
     atexit.register(repository.close)
 
@@ -102,7 +116,7 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     @app.errorhandler(413)
     def too_large(_: Any) -> tuple[Any, int]:
-        return _error("Upload exceeds the 25 MB limit", 413)
+        return _error("Upload exceeds the server request-size limit", 413)
 
     @app.errorhandler(404)
     def route_not_found(exc: Any) -> tuple[Any, int] | Any:

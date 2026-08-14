@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://render.com/schema/render.yaml.json
+# Disposable $0 staging service. This intentionally has no persistent disk.
+services:
+  - type: web
+    name: asset-compensation-hub-staging
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: checksPass
+    numInstances: 1
+    envVars:
+      - key: ASSET_HUB_DATA_DIR
+        value: /tmp/asset-hub-staging
+      - key: ASSET_HUB_DEMO_MODE
+        value: "false"
+      - key: ASSET_HUB_ALLOW_TEST_RESET
+        value: "true"
+      - key: ASSET_HUB_SECRET_KEY
+        generateValue: true
+      - key: ASSET_HUB_ACCESS_USER
+        value: judge
+      - key: ASSET_HUB_ACCESS_PASSWORD
+        sync: false
+      - key: GUNICORN_THREADS
+        value: "2"
+      - key: GUNICORN_TIMEOUT
+        value: "120"

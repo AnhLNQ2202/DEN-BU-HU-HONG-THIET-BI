@@ -1,0 +1,72 @@
+name: asset-compensation-hub
+
+services:
+  app:
+    image: ${ASSET_HUB_IMAGE:-asset-compensation-hub:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      PORT: "10000"
+      ASSET_HUB_DATA_DIR: /var/data
+      ASSET_HUB_DEMO_MODE: ${ASSET_HUB_DEMO_MODE:-true}
+      ASSET_HUB_SECRET_KEY: ${ASSET_HUB_SECRET_KEY:?set ASSET_HUB_SECRET_KEY}
+      ASSET_HUB_ACCESS_USER: ${ASSET_HUB_ACCESS_USER:?set ASSET_HUB_ACCESS_USER}
+      ASSET_HUB_ACCESS_PASSWORD: ${ASSET_HUB_ACCESS_PASSWORD:?set ASSET_HUB_ACCESS_PASSWORD}
+      ASSET_HUB_ACCOUNTING_ORG_ID: ${ASSET_HUB_ACCOUNTING_ORG_ID:-DEMO}
+      ASSET_HUB_ACCOUNTING_TEMPLATE: ${ASSET_HUB_ACCOUNTING_TEMPLATE:-}
+      ASSET_HUB_SUPPLIER_FILE: ${ASSET_HUB_SUPPLIER_FILE:-}
+      ASSET_HUB_DAMAGED_DEBIT_GL: ${ASSET_HUB_DAMAGED_DEBIT_GL:-DEMO.COMP.RECEIVABLE}
+      ASSET_HUB_DAMAGED_CREDIT_GL: ${ASSET_HUB_DAMAGED_CREDIT_GL:-DEMO.DAMAGED.OFFSET}
+      ASSET_HUB_LOST_DEBIT_GL: ${ASSET_HUB_LOST_DEBIT_GL:-DEMO.COMP.RECEIVABLE}
+      ASSET_HUB_LOST_CREDIT_GL: ${ASSET_HUB_LOST_CREDIT_GL:-DEMO.LOST.OFFSET}
+      GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}
+    volumes:
+      - type: bind
+        source: ${ASSET_HUB_HOST_DATA_DIR:-/srv/asset-hub/data}
+        target: /var/data
+    expose:
+      - "10000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:10000/api/health', timeout=5).read()
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      ASSET_HUB_SITE_ADDRESS: ${ASSET_HUB_SITE_ADDRESS:?set ASSET_HUB_SITE_ADDRESS}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/greennode/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  caddy_data:
+  caddy_config:

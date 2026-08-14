@@ -70,6 +70,7 @@ ALLOWED_TRANSITIONS: dict[CaseStatus, frozenset[CaseStatus]] = {
     CaseStatus.ACCOUNTED: frozenset({CaseStatus.CLOSED}),
     CaseStatus.CLOSED: frozenset(),
 }
+_MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
 
 def _identity_part(value: object) -> str:
@@ -90,10 +91,11 @@ def _integer_amount(value: object, field_name: str) -> int | None:
         raise ValidationError(f"{field_name} must be a numeric amount") from exc
     if not decimal_value.is_finite() or decimal_value != decimal_value.to_integral_value():
         raise ValidationError(f"{field_name} must use whole accounting units")
-    result = int(decimal_value)
-    if result < 0:
+    if decimal_value < 0:
         raise ValidationError(f"{field_name} cannot be negative")
-    return result
+    if decimal_value > _MAX_SAFE_INTEGER:
+        raise ValidationError(f"{field_name} exceeds the supported integer limit")
+    return int(decimal_value)
 
 
 def _attribute(source: object, name: str, default: Any = None) -> Any:

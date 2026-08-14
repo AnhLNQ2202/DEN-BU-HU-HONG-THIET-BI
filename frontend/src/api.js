@@ -143,6 +143,10 @@ export function normalizeDashboard(payload) {
     issues,
     batches: Array.isArray(root.batches) ? root.batches.map(normalizeBatch) : [],
     summary: normalizeSummary(root.summary || {}, cases, issues),
+    capabilities: {
+      test_reset: root.capabilities?.test_reset === true,
+      demo_reset: root.capabilities?.demo_reset === true,
+    },
   };
 }
 
@@ -182,9 +186,103 @@ export async function request(path, options = {}) {
   return data || {};
 }
 
+function responseMessage(data, status) {
+  const detail = data?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (detail && typeof detail === "object" && typeof detail.message === "string") {
+    return detail.message;
+  }
+  if (typeof data?.message === "string" && data.message.trim()) return data.message;
+  if (typeof data?.error === "string" && data.error.trim()) return data.error;
+  return `Yêu cầu tải file thất bại (${status}).`;
+}
+
+/** Upload multipart data with real browser upload progress and abort support. */
+export function uploadMultipart(path, formData, { signal, onProgress, headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+
+    const abortError = () => {
+      const error = new Error("Đã huỷ tải file.");
+      error.name = "AbortError";
+      return error;
+    };
+    const onSignalAbort = () => xhr.abort();
+    const cleanup = () => signal?.removeEventListener("abort", onSignalAbort);
+    const settle = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+
+    xhr.open("POST", path);
+    xhr.setRequestHeader("Accept", "application/json");
+    Object.entries(headers).forEach(([name, value]) => xhr.setRequestHeader(name, value));
+    xhr.withCredentials = true;
+    xhr.upload.addEventListener("progress", (event) => {
+      const percent = event.lengthComputable && event.total > 0
+        ? Math.min(100, Math.round((event.loaded / event.total) * 100))
+        : null;
+      onProgress?.({ loaded: event.loaded, total: event.total, percent });
+    });
+    xhr.addEventListener("load", () => {
+      let data = {};
+      if (xhr.responseText) {
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch {
+          data = { message: xhr.responseText };
+        }
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.({ loaded: 1, total: 1, percent: 100 });
+        settle(resolve, data);
+      } else {
+        settle(reject, new Error(responseMessage(data, xhr.status)));
+      }
+    });
+    xhr.addEventListener("error", () => {
+      settle(reject, new Error("Không thể kết nối tới máy chủ để tải file."));
+    });
+    xhr.addEventListener("abort", () => settle(reject, abortError()));
+    signal?.addEventListener("abort", onSignalAbort, { once: true });
+    xhr.send(formData);
+  });
+}
+
 export const dashboardApi = {
   load: (signal) => request(API.dashboard, { signal }).then(normalizeDashboard),
   ingest: () => request(API.ingest, { method: "POST" }),
+  uploadSuppliers: (activeFile, inactiveFile, options = {}) => {
+    const formData = new FormData();
+    formData.append("active_file", activeFile, activeFile.name);
+    formData.append("inactive_file", inactiveFile, inactiveFile.name);
+    return uploadMultipart(API.supplierUpload, formData, {
+      ...options,
+      headers: { ...options.headers, "X-Asset-Hub-Upload": "supplier-v1" },
+    });
+  },
+  supplierStatus: (signal) => request(API.supplierStatus, { signal }),
+  uploadEmails: (files, options = {}) => {
+    const formData = new FormData();
+    Array.from(files).forEach((file) => formData.append("files", file, file.name));
+    return uploadMultipart(API.emailUpload, formData, {
+      ...options,
+      headers: { ...options.headers, "X-Asset-Hub-Upload": "email-v1" },
+    });
+  },
+  clearTestData: () => request(API.clearTestData, {
+    method: "POST",
+    headers: { "X-Asset-Hub-Action": "clear-test-data-v1" },
+    body: { confirm: "CLEAR_TEST_DATA" },
+  }),
   reset: () => request(API.reset, { method: "POST" }),
   updateStatus: (caseId, status) => request(`${API.cases}/${encodeURIComponent(caseId)}/status`, {
     method: "PATCH",

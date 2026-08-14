@@ -1,6 +1,10 @@
 export const API = Object.freeze({
   dashboard: "/api/dashboard",
   ingest: "/api/ingest",
+  supplierUpload: "/api/suppliers/upload",
+  supplierStatus: "/api/suppliers/status",
+  emailUpload: "/api/emails/upload",
+  clearTestData: "/api/test-data/clear",
   cases: "/api/cases",
   batches: "/api/batches",
   compensationPreview: "/api/compensation/preview",
