@@ -51,9 +51,9 @@ not sufficient.
 | `next_case_id` | Allocate monthly sequential IDs | `RETIRED`: deterministic content/source identity prevents duplicate ingestion. |
 | `collect_cases` | Parse all mail, enrich Supplier data, emit warnings | `DONE`: multi-record damaged/lost parsing, Supplier enrichment, explicit skips and semantic credit components. |
 | `merge_with_existing` | Preserve old case IDs/status | `DONE`: transactional upsert preserves workflow state. |
-| `write_case_log` | Rewrite and style `case_log.xlsx` | `RETIRED`: SQLite + monthly export; the original file is no longer mutated. |
+| `write_case_log` | Rewrite and style `case_log.xlsx` | `RETIRED/PARTIAL`: SQLite replaces the mutable workflow log and the original file is no longer mutated. A separate monthly Excel/CSV case-report export is not currently implemented and remains a backlog item if the business still needs it. |
 | `build_dashboard_html` | Generate standalone dashboard HTML | `DONE`: componentized React dashboard retaining the original visual baseline. |
-| `main` | CLI orchestration for scan/log/dashboard | `DONE/RETIRED`: `asset-hub ingest/serve` covers orchestration; SQLite and downloadable outputs replace the mutable monthly log. |
+| `main` | CLI orchestration for scan/log/dashboard | `DONE/RETIRED`: `asset-hub ingest/serve` covers runtime orchestration; the old mutable log-generation entry flow is retired. This does not imply a monthly case-report export exists. |
 
 ## `build_mail_table_from_sentout.py` — 5 functions
 
@@ -70,10 +70,10 @@ not sufficient.
 | Original function | Responsibility | Product mapping |
 |---|---|---|
 | `_is_reply_or_forward` | Detect thread replies/forwards | `RETIRED`: the cloud flow does not scan a mailbox; it replies against the explicitly retained source EML. |
-| `_iter_folders_2_levels` | Traverse Outlook folders | `LOCAL`: Windows/MAPI adapter only; never runs in cloud. |
+| `_iter_folders_2_levels` | Traverse Outlook folders | `RETIRED/EXTERNAL`: no Outlook/MAPI adapter exists in this repository; the product requires explicit source EML selection. |
 | `find_best_mail_by_subject` | Prefer oldest original, else newest reply | `RETIRED`: explicit source-artifact selection removes global mailbox guessing. |
 | nested `_received` | Normalize Outlook received time | `RETIRED`: no mailbox scan occurs in the cloud flow. |
-| `main` | `ReplyAll`, prepend HTML and display a draft | `DONE/LOCAL`: product creates a downloadable Reply-All RFC822 draft and never sends automatically; Outlook display remains local. |
+| `main` | `ReplyAll`, prepend HTML and display a draft | `DONE/EXTERNAL`: product creates a downloadable Reply-All RFC822 draft and never sends automatically. Outlook `Display()` is not implemented; an operator may open the downloaded draft in an approved local client. |
 
 ## `ghep_mail_pdf_word.py` — 12 functions
 

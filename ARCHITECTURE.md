@@ -12,7 +12,7 @@ Domain model          ---- Case, warning, accounting entry, audit event
    |
 Ports                 ---- repository, parser, exporter, document generator
    |
-Adapters              ---- SQLite, EML, Excel, Word PDF, Outlook
+Adapters              ---- SQLite, EML, Excel, Word/cloud PDF, RFC822 draft
 ```
 
 ## Design decisions
@@ -23,8 +23,10 @@ Adapters              ---- SQLite, EML, Excel, Word PDF, Outlook
    warnings; it does not write workbooks or update case state.
 3. **Exports are explicit and idempotent.** A batch is created from selected
    case IDs. The service rejects duplicate or ineligible cases before writing.
-4. **External automation is optional.** Word and Outlook adapters are loaded
-   only on Windows. The core application and demo remain cross-platform.
+4. **External automation is optional.** Word PDF conversion is loaded only on
+   Windows; Linux/Render uses the sandboxed cloud renderer. The product creates
+   an RFC822 `.eml` draft but has no Outlook mailbox/display/send adapter. The
+   core application and demo remain cross-platform.
 5. **Operational data is private by default.** EML, Excel and PDF files are
    ignored by Git. The repository contains synthetic demo records only.
 6. **The server is local by default.** Binding to a LAN interface requires an

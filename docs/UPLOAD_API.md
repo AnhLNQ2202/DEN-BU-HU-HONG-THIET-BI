@@ -85,7 +85,7 @@ is sent to manual review instead of silently overwriting a case.
 ```json
 {
   "ok": true,
-  "message": "Ingested 2 of 3 uploaded emails",
+  "message": "Created 2 cases from 3 uploaded emails",
   "received_count": 3,
   "ingested": 2,
   "case_ids": ["DMG-...", "LOST-..."],
@@ -95,9 +95,14 @@ is sent to manual review instead of silently overwriting a case.
     {"id": "LOST-...", "case_type": "LOST"}
   ],
   "warnings": [],
-  "unknown_files": ["upload-03.eml"]
+  "unknown_files": ["upload-03.eml"],
+  "skipped_files": []
 }
 ```
+
+`received_count` đếm email, còn `ingested` và `case_ids` đếm hồ sơ. Vì một EML
+có thể chứa nhiều tài sản, số case có thể lớn hơn số email; không dùng message
+theo dạng “N of M emails” để suy ra tỷ lệ ingest.
 
 Valid emails are persisted in one repository transaction. LOST-case business
 metadata parsed from the message—including usage start, loss date, and

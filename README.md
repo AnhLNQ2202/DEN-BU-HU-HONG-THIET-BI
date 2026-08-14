@@ -7,6 +7,11 @@ tracking and spreadsheet generation with one modular product. The dashboard is
 implemented in React while the original accounting-import template remains the
 output contract.
 
+For a complete handoff to a new developer or AI—including current GitHub/Render
+state, non-negotiable product decisions, every workflow, business rules, API,
+configuration, security boundaries, deployment runbooks and remaining work—
+start with [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
+
 ## Why it matters
 
 - Detects `DAMAGED` and `LOST` cases from saved EML evidence.
@@ -30,7 +35,7 @@ React dashboard -> Flask JSON API
        -> domain model, transition policy and compensation rules
           -> SQLite repository
           -> EML/Supplier parsers
-          -> Excel/PDF/Outlook adapters
+          -> Excel/PDF/RFC822-draft adapters
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for decisions, API contracts and the
@@ -122,9 +127,10 @@ ruff check .
 pytest --cov=asset_compensation
 ```
 
-The core test suite does not require Microsoft Word or Outlook. Windows COM
-integrations are optional adapters and should be tested separately on a machine
-with Office installed.
+The core test suite does not require Microsoft Word. Word PDF conversion is an
+optional Windows COM adapter and should be tested separately on a machine with
+Office installed. The product generates a downloadable RFC822 `.eml` draft; it
+does not include an Outlook mailbox, display, or send adapter.
 
 ## Demo
 
