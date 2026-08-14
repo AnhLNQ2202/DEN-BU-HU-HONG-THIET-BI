@@ -113,6 +113,11 @@ The repository includes a single-service Docker/Render Blueprint with a
 persistent SQLite disk. Follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for
 local image checks, first deployment, secrets, smoke tests and rollback limits.
 
+For a disposable $0 team preview, use the separate
+[`render.staging.yaml`](render.staging.yaml) Blueprint and follow
+[docs/RENDER_FREE_STAGING.md](docs/RENDER_FREE_STAGING.md). It uses only
+synthetic demo data; SQLite and generated outputs are intentionally ephemeral.
+
 For GreenNode, use the one-vServer Docker Compose deployment in
 [docs/GREENNODE_DEPLOYMENT.md](docs/GREENNODE_DEPLOYMENT.md). It keeps the app
 port private behind Caddy HTTPS and persists SQLite/output under `/var/data`.
