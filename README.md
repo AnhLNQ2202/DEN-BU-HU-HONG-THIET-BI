@@ -113,6 +113,10 @@ The repository includes a single-service Docker/Render Blueprint with a
 persistent SQLite disk. Follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for
 local image checks, first deployment, secrets, smoke tests and rollback limits.
 
+For GreenNode, use the one-vServer Docker Compose deployment in
+[docs/GREENNODE_DEPLOYMENT.md](docs/GREENNODE_DEPLOYMENT.md). It keeps the app
+port private behind Caddy HTTPS and persists SQLite/output under `/var/data`.
+
 ## Project status
 
 This is a hackathon MVP. The hosted demo can be protected with shared Basic

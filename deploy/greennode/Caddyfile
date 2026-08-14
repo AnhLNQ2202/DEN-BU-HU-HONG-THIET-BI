@@ -1,0 +1,14 @@
+{
+	admin off
+}
+
+{$ASSET_HUB_SITE_ADDRESS} {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format console
+	}
+
+	reverse_proxy app:10000
+}

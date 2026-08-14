@@ -37,3 +37,9 @@ jobs:
         run: pytest --cov=asset_compensation --cov-report=term-missing
       - name: Build production container
         run: docker build --tag asset-compensation-hub:ci .
+      - name: Validate GreenNode Compose
+        run: >-
+          docker compose
+          --env-file .env.greennode.example
+          -f compose.greennode.yaml
+          config --quiet
