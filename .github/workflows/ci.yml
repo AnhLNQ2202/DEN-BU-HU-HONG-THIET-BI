@@ -35,3 +35,5 @@ jobs:
         run: ruff check .
       - name: Test
         run: pytest --cov=asset_compensation --cov-report=term-missing
+      - name: Build production container
+        run: docker build --tag asset-compensation-hub:ci .

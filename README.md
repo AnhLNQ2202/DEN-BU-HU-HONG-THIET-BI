@@ -70,6 +70,10 @@ present—set `ASSET_HUB_ACCOUNTING_TEMPLATE` to that template's absolute path.
 The repository ships a data-free `.xlsx` copy with the same sheet and 30-column
 layout for demo and CI. Keep the operational template outside Git.
 
+VBA preservation is compatibility, not a security endorsement. Have IT/Finance
+review and sign any operational macro project before configuring it on a shared
+or cloud environment.
+
 ```powershell
 $env:ASSET_HUB_ACCOUNTING_TEMPLATE = "C:\approved\Template_DENBU2.xlsm"
 $env:ASSET_HUB_ACCOUNTING_ORG_ID = "your-approved-org-id"

@@ -14,6 +14,14 @@ This repository is designed for source code and synthetic demo data only.
 The `.gitignore` blocks these formats by default. Keep operational data below
 `var/`, which is also ignored.
 
+## Macro-enabled templates
+
+The built-in accounting template is a data-free `.xlsx`. Legacy `.xlsm` files
+can contain operational records, identifying document metadata and executable
+VBA, so they must remain outside Git. The exporter can preserve VBA from an
+explicitly configured approved template, but it does not certify or sign that
+macro code. Review macros separately before using them on a shared service.
+
 ## Local server
 
 The application binds to `127.0.0.1` by default. Do not change the host to
