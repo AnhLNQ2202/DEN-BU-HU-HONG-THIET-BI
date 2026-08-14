@@ -3,6 +3,7 @@ export const API = Object.freeze({
   ingest: "/api/ingest",
   cases: "/api/cases",
   batches: "/api/batches",
+  compensationPreview: "/api/compensation/preview",
   reset: "/api/demo/reset",
 });
 

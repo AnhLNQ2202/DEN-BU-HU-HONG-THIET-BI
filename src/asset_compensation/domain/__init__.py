@@ -1,5 +1,12 @@
 """Public domain API for asset compensation."""
 
+from .compensation import (
+    CompensationAsset,
+    CompensationPreview,
+    CompensationStatus,
+    DepreciationGroup,
+    ReferenceStatus,
+)
 from .exceptions import (
     AssetCompensationError,
     CaseNotFoundError,
@@ -28,10 +35,15 @@ __all__ = [
     "CaseStatus",
     "CaseSummary",
     "CaseType",
+    "CompensationAsset",
+    "CompensationPreview",
+    "CompensationStatus",
     "ConcurrencyError",
+    "DepreciationGroup",
     "InvalidStatusTransition",
     "ParsedCase",
     "RepositoryError",
+    "ReferenceStatus",
     "StatusEvent",
     "ValidationError",
     "as_utc",

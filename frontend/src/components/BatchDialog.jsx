@@ -4,7 +4,7 @@ import { TYPE_META } from "../constants.js";
 import { formatCurrency, isValidBatchName, numberFormatter, suggestedBatchName } from "../utils.js";
 import { Icon } from "./Icon.jsx";
 
-export function BatchDialog({ open, cases, busy, onClose, onCreate }) {
+export function BatchDialog({ open, cases, busy, initialBatchName, onClose, onCreate }) {
   const dialogRef = useRef(null);
   const [batchName, setBatchName] = useState(suggestedBatchName());
   const [validation, setValidation] = useState("");
@@ -14,13 +14,13 @@ export function BatchDialog({ open, cases, busy, onClose, onCreate }) {
   useEffect(() => {
     const dialog = dialogRef.current;
     if (open && dialog && !dialog.open) {
-      setBatchName(suggestedBatchName());
+      setBatchName(initialBatchName || suggestedBatchName());
       setValidation("");
       dialog.showModal();
       window.requestAnimationFrame(() => dialog.querySelector("input")?.focus());
     }
     if (!open && dialog?.open) dialog.close();
-  }, [open]);
+  }, [initialBatchName, open]);
 
   function submit(event) {
     event.preventDefault();

@@ -26,6 +26,10 @@ def _dependencies() -> tuple[Any, Any, Any]:
     return extension["settings"], extension["repository"], extension["case_service"]
 
 
+def _compensation_service() -> Any:
+    return current_app.extensions["asset_hub"]["compensation_service"]
+
+
 def _json_body() -> dict[str, Any]:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -172,6 +176,36 @@ def case_detail(case_id: str) -> Any:
     case = service.get_case(case_id)
     history = [event.to_dict() for event in service.status_history(case_id)]
     return jsonify({"ok": True, "case": case.to_dict(), "history": history})
+
+
+@blueprint.post("/api/compensation/preview")
+def compensation_preview() -> Any:
+    """Preview policy calculations without persisting or exporting anything."""
+
+    data = _json_body()
+    raw_assets = data.get("assets")
+    if not isinstance(raw_assets, list) or not raw_assets:
+        raise ValidationError("assets must be a non-empty list")
+    if len(raw_assets) > 100:
+        raise ValidationError("A preview cannot contain more than 100 assets")
+    if not all(isinstance(item, dict) for item in raw_assets):
+        raise ValidationError("Each assets item must be a JSON object")
+
+    calculator = _compensation_service()
+    results = [calculator.preview_mapping(item).to_dict() for item in raw_assets]
+    status_counts: dict[str, int] = {}
+    for result in results:
+        status = result["status"]
+        status_counts[status] = status_counts.get(status, 0) + 1
+    return jsonify(
+        {
+            "ok": True,
+            "count": len(results),
+            "review_required": any(result["review_required"] for result in results),
+            "status_counts": status_counts,
+            "results": results,
+        }
+    )
 
 
 @blueprint.patch("/api/cases/<case_id>/status")

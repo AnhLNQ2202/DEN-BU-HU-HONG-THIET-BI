@@ -6,7 +6,7 @@ business decisions independent from file formats and Windows automation.
 ```text
 React dashboard / CLI
    |
-Application services  ---- status policy, idempotency, batch orchestration
+Application services  ---- status policy, compensation preview, batch orchestration
    |
 Domain model          ---- Case, warning, accounting entry, audit event
    |
@@ -33,6 +33,11 @@ Adapters              ---- SQLite, EML, Excel, Word PDF, Outlook
    all 30 headers before writing, clones the template's row formats and keeps
    VBA when an approved `.xlsm` is configured. The repository copy is
    sanitised and contains no operational records.
+8. **TranNNB calculation is a side-effect-free preview.** The compensation
+   service applies the documented depreciation, responsibility-fee and
+   exemption rules without editing source workbooks, changing case state or
+   sending mail. Unknown or conflicting inputs are returned as
+   `NEEDS_REVIEW`; they are never guessed.
 
 ## Case lifecycle
 
@@ -54,12 +59,16 @@ creating another accounting candidate.
 - `GET /api/cases/<case_id>`
 - `PATCH /api/cases/<case_id>/status`
 - `POST /api/ingest`
+- `POST /api/compensation/preview`
 - `POST /api/batches`
 - `GET /api/batches/<batch_id>/download`
 - `POST /api/demo/reset`
 
 The web layer only validates HTTP input and delegates to services. It does not
-parse mail, calculate accounting lines or edit SQLite directly.
+parse mail, calculate compensation or accounting lines, or edit SQLite
+directly. See
+[docs/COMPENSATION_PREVIEW_API.md](docs/COMPENSATION_PREVIEW_API.md) for the
+preview contract and review states.
 
 ## Growth path
 

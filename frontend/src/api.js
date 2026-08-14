@@ -195,6 +195,10 @@ export const dashboardApi = {
     method: "POST",
     body: { batch_name: batchName, case_ids: caseIds },
   }),
+  previewCompensation: (assets) => request(API.compensationPreview, {
+    method: "POST",
+    body: { assets },
+  }),
 };
 
 export function statusLabel(status) {

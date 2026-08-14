@@ -1,0 +1,70 @@
+name: asset-compensation-hub-dev
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/dev/backend.Dockerfile
+    command:
+      - python
+      - -m
+      - flask
+      - --app
+      - asset_compensation.web.app:create_app
+      - run
+      - --debug
+      - --host=0.0.0.0
+      - --port=5000
+    environment:
+      ASSET_HUB_DATA_DIR: /workspace/var
+      ASSET_HUB_DEMO_MODE: "true"
+      ASSET_HUB_HOST: 0.0.0.0
+      ASSET_HUB_PORT: "5000"
+      ASSET_HUB_SECRET_KEY: local-compose-development-only
+      PYTHONPATH: /workspace/src
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - .:/workspace
+      - asset-hub-dev-data:/workspace/var
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:5000/api/health', timeout=2)
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    init: true
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/dev/frontend.Dockerfile
+    command:
+      - sh
+      - -c
+      - pnpm install --frozen-lockfile && pnpm dev
+    environment:
+      CHOKIDAR_INTERVAL: "300"
+      CHOKIDAR_USEPOLLING: "true"
+      VITE_API_PROXY: http://backend:5000
+      VITE_BASE: /
+      VITE_DEV_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - .:/workspace
+      - frontend-node-modules:/workspace/frontend/node_modules
+    depends_on:
+      backend:
+        condition: service_healthy
+    init: true
+
+volumes:
+  asset-hub-dev-data:
+  frontend-node-modules:

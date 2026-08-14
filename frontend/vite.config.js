@@ -11,11 +11,14 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
 
   return {
-    base: "/static/dist/",
+    // Production is served by Flask below /static/dist/. Containers can opt in
+    // to a root-based Vite dev server without changing the production build.
+    base: env.VITE_BASE || "/static/dist/",
     plugins: [react()],
     server: {
-      host: "127.0.0.1",
-      port: 5173,
+      host: env.VITE_DEV_HOST || "127.0.0.1",
+      port: Number(env.VITE_DEV_PORT || 5173),
+      strictPort: true,
       proxy: {
         "/api": {
           target: env.VITE_API_PROXY || "http://127.0.0.1:5000",
