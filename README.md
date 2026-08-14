@@ -64,7 +64,9 @@ Runtime state is created below `var/` and is ignored by Git.
 
 ## Working with real files
 
-1. Copy EML files into `var/inbox/`.
+1. From **Task > NganTLT**, upload exactly one Supplier Active and one Supplier
+   Inactive file, then upload one or more `.eml` files. The legacy server-inbox
+   flow under `var/inbox/` remains available for local batch ingestion.
 2. Keep Supplier/FA&GL workbooks outside the repository or under `var/`.
 3. Set `ASSET_HUB_DEMO_MODE=false` before the first real-data startup so demo
    and operational cases are never mixed.
@@ -90,7 +92,9 @@ The application does not load `.env` automatically; set runtime variables in
 the shell, Docker/Render dashboard, or your process manager.
 
 Do not commit real email, supplier, accounting or evidence files. See
-[SECURITY.md](SECURITY.md).
+[SECURITY.md](SECURITY.md). Do not upload operational employee data to the
+public Render Free staging service; use only synthetic or approved anonymised
+fixtures there.
 
 ## Quality checks
 
@@ -115,8 +119,9 @@ local image checks, first deployment, secrets, smoke tests and rollback limits.
 
 For a disposable $0 team preview, use the separate
 [`render.staging.yaml`](render.staging.yaml) Blueprint and follow
-[docs/RENDER_FREE_STAGING.md](docs/RENDER_FREE_STAGING.md). It uses only
-synthetic demo data; SQLite and generated outputs are intentionally ephemeral.
+[docs/RENDER_FREE_STAGING.md](docs/RENDER_FREE_STAGING.md). It starts empty,
+accepts only explicitly uploaded test data, and keeps SQLite plus generated
+outputs intentionally ephemeral.
 
 For GreenNode, use the one-vServer Docker Compose deployment in
 [docs/GREENNODE_DEPLOYMENT.md](docs/GREENNODE_DEPLOYMENT.md). It keeps the app

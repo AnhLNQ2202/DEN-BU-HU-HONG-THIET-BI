@@ -81,24 +81,22 @@ def decode_mime_header(value: str | None) -> str:
 def parse_money(value: str) -> Decimal:
     """Parse whole-unit VND values written with either dot or comma groups."""
 
-    cleaned = re.sub(r"(?i)(vnd|vnđ|đ)", "", value).strip().replace(" ", "")
-    cleaned = re.sub(r"[^0-9,.-]", "", cleaned)
-    if not cleaned or cleaned in {"-", ".", ","}:
-        raise InvalidOperation(f"Invalid money value: {value!r}")
-
-    sign = "-" if cleaned.startswith("-") else ""
-    unsigned = cleaned.lstrip("-")
-    separators = [separator for separator in (",", ".") if separator in unsigned]
-    if separators:
-        groups = re.split(r"[.,]", unsigned)
-        is_grouped_integer = len(groups) > 1 and all(
-            len(group) == 3 for group in groups[1:]
+    cleaned = re.sub(r"(?i)(?:vnd|vnđ|đ|₫)", "", value).strip().replace(" ", "")
+    if re.fullmatch(r"-?\d+", cleaned):
+        normalized = cleaned
+    else:
+        grouped = re.fullmatch(
+            r"(?P<sign>-?)\d{1,3}(?P<separator>[.,])\d{3}"
+            r"(?:(?P=separator)\d{3})*",
+            cleaned,
         )
-        if is_grouped_integer or len(separators) == 2:
-            unsigned = "".join(groups)
-        else:
-            unsigned = unsigned.replace(",", ".")
-    return Decimal(sign + unsigned)
+        if grouped is None:
+            raise EmlParseError("Email contains an invalid monetary value")
+        normalized = grouped.group("sign") + re.sub(r"[.,]", "", cleaned.lstrip("-"))
+    try:
+        return Decimal(normalized)
+    except InvalidOperation as exc:
+        raise EmlParseError("Email contains an invalid monetary value") from exc
 
 
 def _fold(value: str) -> str:

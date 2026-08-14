@@ -14,6 +14,21 @@ This repository is designed for source code and synthetic demo data only.
 The `.gitignore` blocks these formats by default. Keep operational data below
 `var/`, which is also ignored.
 
+## Browser uploads
+
+Supplier upload accepts an explicit Active/Inactive pair and keeps only the
+minimum normalized lookup fields. Raw Supplier inputs are removed before the
+new reference version is activated. EML upload validates bounded RFC 822 and
+MIME structures, rejects attachments, replaces client filenames, and does not
+copy raw messages into application storage. Multipart handling may use
+short-lived operating-system temp files during the request.
+
+Both routes require the normal application authentication plus a
+route-specific request header. These controls are suitable for a hackathon
+test environment, not a replacement for SSO/RBAC, a data-processing agreement,
+retention policy, or an approved internal hosting review. Public Render Free
+staging must contain synthetic or approved anonymised fixtures only.
+
 ## Macro-enabled templates
 
 The built-in accounting template is a data-free `.xlsx`. Legacy `.xlsm` files

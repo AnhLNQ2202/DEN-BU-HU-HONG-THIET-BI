@@ -12,7 +12,13 @@ import { NganWorkspace, TranWorkspace } from "./components/TaskWorkspace.jsx";
 import { statusLabel, translate } from "./i18n.js";
 import { filterAndSortCases, numberFormatter, toNumber } from "./utils.js";
 
-const EMPTY_DASHBOARD = Object.freeze({ cases: [], issues: [], batches: [], summary: null });
+const EMPTY_DASHBOARD = Object.freeze({
+  cases: [],
+  issues: [],
+  batches: [],
+  summary: null,
+  capabilities: { test_reset: false, demo_reset: false },
+});
 const DEFAULT_SORT = Object.freeze({ field: "received_at", direction: "desc" });
 
 function initialLanguage() {
@@ -43,7 +49,8 @@ export default function App() {
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchCases, setBatchCases] = useState([]);
   const [initialBatchName, setInitialBatchName] = useState("");
-  const [ingesting, setIngesting] = useState(false);
+  const [clearingTestData, setClearingTestData] = useState(false);
+  const [testDataClearVersion, setTestDataClearVersion] = useState(0);
   const [resetting, setResetting] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
@@ -127,28 +134,36 @@ export default function App() {
     setBatchOpen(true);
   }
 
-  async function ingestEmails() {
-    setIngesting(true);
-    try {
-      const result = await dashboardApi.ingest();
-      const ingested = toNumber(result?.ingested ?? result?.created ?? result?.count);
-      const warningCount = Array.isArray(result?.warnings) ? result.warnings.length : 0;
-      const unknownCount = Array.isArray(result?.unknown_files) ? result.unknown_files.length : 0;
-      if (warningCount || unknownCount) {
-        pushToast(
-          ingested === 0 ? "Không nạp được email" : "Nạp email có cảnh báo",
-          `${numberFormatter.format(ingested)} hồ sơ · ${numberFormatter.format(unknownCount)} file không nạp được · ${numberFormatter.format(warningCount)} cảnh báo.`,
-          "warning",
-        );
-      } else {
-        pushToast("Nạp email hoàn tất", `${numberFormatter.format(ingested)} hồ sơ đã được cập nhật.`, "success");
-      }
-      await loadDashboard({ quiet: true });
-    } catch (error) {
-      pushToast("Không nạp được email", error.message, "error");
-    } finally {
-      setIngesting(false);
-    }
+  async function uploadSuppliers({ activeFile, inactiveFile, signal, onProgress }) {
+    const result = await dashboardApi.uploadSuppliers(activeFile, inactiveFile, {
+      signal,
+      onProgress,
+    });
+    const collisionCount = toNumber(
+      result?.collision_count ?? result?.status?.collision_count,
+    );
+    const totalCount = toNumber(result?.total_count ?? result?.status?.total_count);
+    pushToast(
+      collisionCount ? "Supplier có domain cần kiểm tra" : "Đã cập nhật Supplier",
+      `${numberFormatter.format(totalCount)} bản ghi · ${numberFormatter.format(collisionCount)} domain trùng.`,
+      collisionCount ? "warning" : "success",
+    );
+    await loadDashboard({ quiet: true });
+    return result;
+  }
+
+  async function uploadEmails({ files, signal, onProgress }) {
+    const result = await dashboardApi.uploadEmails(files, { signal, onProgress });
+    const ingested = toNumber(result?.ingested ?? result?.created ?? result?.count);
+    const warningCount = Array.isArray(result?.warnings) ? result.warnings.length : 0;
+    const unknownCount = Array.isArray(result?.unknown_files) ? result.unknown_files.length : 0;
+    pushToast(
+      warningCount || unknownCount ? "Nạp email có cảnh báo" : "Nạp email hoàn tất",
+      `${numberFormatter.format(ingested)} hồ sơ · ${numberFormatter.format(unknownCount)} file không nạp được · ${numberFormatter.format(warningCount)} cảnh báo.`,
+      warningCount || unknownCount ? "warning" : "success",
+    );
+    await loadDashboard({ quiet: true });
+    return result;
   }
 
   async function resetDemo() {
@@ -163,6 +178,31 @@ export default function App() {
       pushToast("Không đặt lại được demo", error.message, "error");
     } finally {
       setResetting(false);
+    }
+  }
+
+  async function clearTestData() {
+    const confirmed = window.confirm(
+      "Xóa toàn bộ dữ liệu test? Tất cả case, batch, file output và dữ liệu Supplier đã upload sẽ bị xóa. Hành động này không thể hoàn tác.",
+    );
+    if (!confirmed) return;
+    setClearingTestData(true);
+    try {
+      const result = await dashboardApi.clearTestData();
+      setActiveCaseId(null);
+      setBatchOpen(false);
+      setBatchCases([]);
+      setTestDataClearVersion((current) => current + 1);
+      pushToast(
+        "Đã xóa dữ liệu test",
+        result?.message || "Case, batch, file output và Supplier reference đã được xóa.",
+        "success",
+      );
+      await loadDashboard({ quiet: true });
+    } catch (error) {
+      pushToast("Không xóa được dữ liệu test", error.message, "error");
+    } finally {
+      setClearingTestData(false);
     }
   }
 
@@ -282,15 +322,19 @@ export default function App() {
             <section className={`tab-content ${activeTab === "ngan" ? "active" : ""}`}>
               <NganWorkspace
                 batches={dashboard.batches}
+                capabilities={dashboard.capabilities}
                 cases={dashboard.cases}
-                ingesting={ingesting}
+                clearingTestData={clearingTestData}
                 language={language}
                 resetting={resetting}
                 statusBusy={statusBusy}
-                onIngest={ingestEmails}
+                testDataClearVersion={testDataClearVersion}
+                onEmailUpload={uploadEmails}
+                onClearTestData={clearTestData}
                 onOpenBatch={openBatch}
                 onOpenCase={setActiveCaseId}
                 onReset={resetDemo}
+                onSupplierUpload={uploadSuppliers}
                 onUpdateStatus={updateCaseStatus}
               />
             </section>

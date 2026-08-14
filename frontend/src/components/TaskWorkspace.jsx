@@ -3,8 +3,9 @@ import React, { useMemo, useState } from "react";
 import { dashboardApi } from "../api.js";
 import { API } from "../constants.js";
 import { translate } from "../i18n.js";
-import { formatCurrency, suggestedBatchName } from "../utils.js";
+import { formatCurrency, suggestedBatchName, toNumber } from "../utils.js";
 import { CaseTable } from "./CaseTable.jsx";
+import { UploadWorkspace } from "./UploadWorkspace.jsx";
 
 function localIsoDate(value = new Date()) {
   const offset = value.getTimezoneOffset() * 60_000;
@@ -15,7 +16,7 @@ const EMPTY_COMPENSATION_FORM = Object.freeze({
   tag_number: "",
   asset_name: "",
   domain: "",
-  lost_date: localIsoDate(),
+  lost_date: "",
   start_date: "",
   cost: "",
   asset_number: "",
@@ -26,8 +27,8 @@ const EMPTY_COMPENSATION_FORM = Object.freeze({
   location: "",
   group: "",
   fee_rate: "",
-  physical: true,
-  lookup_status: "MATCHED",
+  physical: "",
+  lookup_status: "",
 });
 
 const DEMO_COMPENSATION_FORM = Object.freeze({
@@ -37,6 +38,8 @@ const DEMO_COMPENSATION_FORM = Object.freeze({
   domain: "demo.user",
   start_date: "2025-01-15",
   cost: "20000000",
+  physical: true,
+  lookup_status: "MATCHED",
 });
 
 function resultStatusLabel(language, status) {
@@ -54,17 +57,94 @@ function percentage(value) {
   return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(value * 100)}%`;
 }
 
+function firstSourceValue(caseItem, keys) {
+  const metadata = caseItem?.metadata && typeof caseItem.metadata === "object"
+    ? caseItem.metadata
+    : {};
+  for (const key of keys) {
+    const value = caseItem?.[key] ?? metadata[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+  }
+  return "";
+}
+
+function inputDate(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const local = /^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$/.exec(text);
+  if (!local) return "";
+  return `${local[3]}-${local[2].padStart(2, "0")}-${local[1].padStart(2, "0")}`;
+}
+
+function inputMoney(value) {
+  if (value === "" || value == null) return "";
+  const parsed = toNumber(value, Number.NaN);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? String(parsed) : "";
+}
+
+function inputBoolean(value) {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["true", "yes", "1", "physical", "hardware"].includes(normalized)) return true;
+  if (["false", "no", "0", "non-physical", "software"].includes(normalized)) return false;
+  return "";
+}
+
+function lookupStatusFromCase(caseItem) {
+  const explicit = String(firstSourceValue(caseItem, ["lookup_status", "reference_status"]) || "")
+    .trim()
+    .toUpperCase();
+  if (["MATCHED", "NOT_FOUND", "AMBIGUOUS"].includes(explicit)) return explicit;
+  const warnings = (caseItem?.warnings || []).join(" ").toLowerCase();
+  if (/multiple|ambiguous|duplicate/.test(warnings)) return "AMBIGUOUS";
+  if (/supplier.*not found|missing supplier/.test(warnings)) return "NOT_FOUND";
+  if (caseItem?.supplier_number && caseItem?.supplier_site) return "MATCHED";
+  return "";
+}
+
+function compensationFormFromCase(caseItem) {
+  const group = String(firstSourceValue(caseItem, ["group", "depreciation_group"]) || "")
+    .trim()
+    .toUpperCase();
+  const feeRate = firstSourceValue(caseItem, ["fee_rate", "responsibility_fee_rate"]);
+  return {
+    ...EMPTY_COMPENSATION_FORM,
+    tag_number: String(caseItem?.asset_code || "").trim().toUpperCase(),
+    asset_name: String(caseItem?.asset_name || "").trim(),
+    domain: String(caseItem?.domain || "").trim(),
+    lost_date: inputDate(firstSourceValue(caseItem, ["loss_date", "lost_date"])),
+    start_date: inputDate(firstSourceValue(caseItem, ["usage_start", "start_date", "in_service_date"])),
+    cost: inputMoney(firstSourceValue(caseItem, ["original_value", "original_cost", "cost"])),
+    asset_number: String(firstSourceValue(caseItem, ["asset_number"]) || "").trim(),
+    book: String(firstSourceValue(caseItem, ["book"]) || "").trim(),
+    entity: String(firstSourceValue(caseItem, ["entity"]) || "").trim(),
+    cost_center: String(firstSourceValue(caseItem, ["cost_center"]) || "").trim(),
+    product_code: String(firstSourceValue(caseItem, ["product_code"]) || "").trim(),
+    location: String(firstSourceValue(caseItem, ["location"]) || "").trim(),
+    group: ["FOUR_YEAR", "SIX_YEAR"].includes(group) ? group : "",
+    fee_rate: feeRate === "" ? "" : String(feeRate),
+    physical: inputBoolean(firstSourceValue(caseItem, ["physical", "is_physical"])),
+    lookup_status: lookupStatusFromCase(caseItem),
+  };
+}
+
 export function NganWorkspace({
   batches,
+  capabilities,
   cases,
-  ingesting,
+  clearingTestData,
   language,
   resetting,
   statusBusy,
-  onIngest,
+  testDataClearVersion,
+  onClearTestData,
+  onEmailUpload,
   onOpenBatch,
   onOpenCase,
   onReset,
+  onSupplierUpload,
   onUpdateStatus,
 }) {
   const [batchName, setBatchName] = useState(suggestedBatchName());
@@ -85,21 +165,17 @@ export function NganWorkspace({
         {translate(language, "pendingQueue")} <strong>{readyCases.length}</strong>
       </div>
 
-      <section className="panel operation-panel">
-        <h3>{translate(language, "supplierPanel")}</h3>
-        <div className="panel-row">
-          <label className="small" htmlFor="supplier-files">{translate(language, "supplierLabel")}</label>
-          <input id="supplier-files" type="file" multiple accept=".xls,.xlsx" disabled />
-          <button className="btn secondary" type="button" disabled>{translate(language, "supplierAction")}</button>
-          <button className="btn secondary" type="button" disabled={ingesting} onClick={onIngest}>
-            {translate(language, "ingestEmail")}
-          </button>
-          <button className="btn secondary" type="button" disabled={resetting} onClick={onReset}>
-            {translate(language, "resetDemo")}
-          </button>
-        </div>
-        <div className="disabled-note">{translate(language, "supplierHint")}</div>
-      </section>
+      <UploadWorkspace
+        capabilities={capabilities}
+        clearingTestData={clearingTestData}
+        language={language}
+        resetting={resetting}
+        testDataClearVersion={testDataClearVersion}
+        onClearTestData={onClearTestData}
+        onEmailUpload={onEmailUpload}
+        onReset={onReset}
+        onSupplierUpload={onSupplierUpload}
+      />
 
       <section className="panel operation-panel">
         <h3>{translate(language, "accountingPanel")}</h3>
@@ -186,16 +262,13 @@ export function TranWorkspace({ cases, language }) {
   function chooseCase(caseId) {
     setSelectedCaseId(caseId);
     const selected = lostCases.find((item) => item.id === caseId);
-    if (!selected) return;
-    setForm((current) => ({
-      ...current,
-      tag_number: selected.asset_code || current.tag_number,
-      asset_name: selected.asset_name || current.asset_name,
-      domain: selected.domain || current.domain,
-      lost_date: selected.received_at
-        ? String(selected.received_at).slice(0, 10)
-        : current.lost_date,
-    }));
+    if (!selected) {
+      setForm({ ...EMPTY_COMPENSATION_FORM });
+      setResult(null);
+      setError("");
+      return;
+    }
+    setForm(compensationFormFromCase(selected));
     setResult(null);
     setError("");
   }
@@ -259,6 +332,12 @@ export function TranWorkspace({ cases, language }) {
             </button>
           </div>
 
+          {selectedCaseId && (
+            <div className="dialog-note is-warning" role="status">
+              <p>{translate(language, "casePrefillNotice")}</p>
+            </div>
+          )}
+
           <div className="compensation-grid">
             <label><span>{translate(language, "tagNumber")} *</span><input type="text" value={form.tag_number} onChange={(event) => updateField("tag_number", event.target.value.toUpperCase())} required /></label>
             <label><span>{translate(language, "assetName")} *</span><input type="text" value={form.asset_name} onChange={(event) => updateField("asset_name", event.target.value)} required /></label>
@@ -268,15 +347,27 @@ export function TranWorkspace({ cases, language }) {
             <label><span>{translate(language, "originalCost")} *</span><input type="number" min="0" step="1" value={form.cost} onChange={(event) => updateField("cost", event.target.value)} required /></label>
             <label>
               <span>{translate(language, "referenceStatus")}</span>
-              <select value={form.lookup_status} onChange={(event) => updateField("lookup_status", event.target.value)}>
+              <select value={form.lookup_status} onChange={(event) => updateField("lookup_status", event.target.value)} required>
+                <option value="">{translate(language, "chooseReferenceStatus")}</option>
                 <option value="MATCHED">{translate(language, "referenceMatched")}</option>
                 <option value="NOT_FOUND">{translate(language, "referenceMissing")}</option>
                 <option value="AMBIGUOUS">{translate(language, "referenceAmbiguous")}</option>
               </select>
             </label>
-            <label className="checkbox-field">
-              <input type="checkbox" checked={form.physical} onChange={(event) => updateField("physical", event.target.checked)} />
+            <label>
               <span>{translate(language, "physicalAsset")}</span>
+              <select
+                value={form.physical === "" ? "" : String(form.physical)}
+                onChange={(event) => updateField(
+                  "physical",
+                  event.target.value === "" ? "" : event.target.value === "true",
+                )}
+                required
+              >
+                <option value="">{translate(language, "choosePhysical")}</option>
+                <option value="true">{translate(language, "physicalYes")}</option>
+                <option value="false">{translate(language, "physicalNo")}</option>
+              </select>
             </label>
           </div>
 

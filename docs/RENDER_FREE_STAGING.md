@@ -23,11 +23,16 @@ instance Free.
 ## Dữ liệu dùng một lần
 
 - SQLite, inbox và output nằm tại `/tmp/asset-hub-staging`.
-- `ASSET_HUB_DEMO_MODE=true` tự seed lại dữ liệu synthetic khi database trống.
+- `ASSET_HUB_DEMO_MODE=false` giữ dashboard trống sau deploy. Dữ liệu test chỉ
+  xuất hiện khi người dùng chủ động nạp fixture synthetic.
+- `ASSET_HUB_ALLOW_TEST_RESET=true` chỉ mở nút **Xóa dữ liệu test** trên staging
+  dùng một lần. Nút yêu cầu xác nhận rồi xoá case, batch, file output và bản
+  Supplier đã upload; không đụng tới inbox hay template cấu hình bên ngoài.
 - Render Free có filesystem tạm: restart, redeploy hoặc spin-down có thể xoá
   mọi thay đổi và file output. Đây là hành vi mong đợi của staging.
-- Chỉ dùng dữ liệu synthetic. Không upload email, PDF, workbook, supplier file
-  hoặc dữ liệu nhân viên thật.
+- Chỉ upload cặp Supplier và EML synthetic/đã ẩn danh để test tính
+  năng. Không dùng email, Supplier, PDF, workbook hay thông tin nhân viên
+  vận hành thật trên staging công khai này.
 
 Nếu cần giữ dữ liệu, không gắn disk vào service Free này. Hãy dùng blueprint
 trả phí `render.yaml` hoặc thiết kế storage/database riêng sau khi review yêu
@@ -35,12 +40,18 @@ cầu bảo mật.
 
 ## Smoke test
 
-- `GET /api/health` trả `200`, `"ok": true` và `"demo_mode": true`. Endpoint
+- `GET /api/health` trả `200`, `"ok": true` và `"demo_mode": false`. Endpoint
   này cố ý không yêu cầu Basic Auth để Render health check hoạt động.
 - `/` trả `401` khi chưa đăng nhập và tải dashboard sau khi dùng tài khoản
   staging.
-- Dashboard có case demo; tạo thử một batch và tải workbook output.
-- Sau một restart/redeploy, dữ liệu có thể trở về bộ demo ban đầu.
+- Dashboard khởi đầu trống. Upload cặp Supplier synthetic, sau đó upload
+  EML synthetic; case mới phải xuất hiện mà không cần restart.
+- Với case `LOST`, chọn case trong màn TranNNB và kiểm tra chỉ các
+  trường thật sự có trong mail được điền sẵn.
+- Bấm **Xóa dữ liệu test**, xác nhận, rồi kiểm tra dashboard và trạng thái
+  Supplier trở về trống.
+- Sau restart/redeploy, dữ liệu có thể bị xoá và dashboard trở lại
+  trạng thái trống.
 - Log không chứa mật khẩu hoặc nội dung dữ liệu nghiệp vụ.
 
 ## Giới hạn và dọn dẹp

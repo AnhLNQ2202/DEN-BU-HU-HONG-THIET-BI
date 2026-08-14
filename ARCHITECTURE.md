@@ -59,6 +59,10 @@ creating another accounting candidate.
 - `GET /api/cases/<case_id>`
 - `PATCH /api/cases/<case_id>/status`
 - `POST /api/ingest`
+- `GET /api/suppliers/status`
+- `POST /api/suppliers/upload`
+- `POST /api/emails/upload`
+- `POST /api/test-data/clear` (explicitly enabled disposable staging only)
 - `POST /api/compensation/preview`
 - `POST /api/batches`
 - `GET /api/batches/<batch_id>/download`
@@ -69,6 +73,8 @@ parse mail, calculate compensation or accounting lines, or edit SQLite
 directly. See
 [docs/COMPENSATION_PREVIEW_API.md](docs/COMPENSATION_PREVIEW_API.md) for the
 preview contract and review states.
+See [docs/UPLOAD_API.md](docs/UPLOAD_API.md) for upload limits, collision
+handling, privacy guarantees and multipart contracts.
 
 ## Growth path
 

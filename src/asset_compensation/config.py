@@ -25,6 +25,7 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 5000
     demo_mode: bool = True
+    allow_test_reset: bool = False
     secret_key: str = "local-development-only"
     supplier_file: Path | None = None
     accounting_template: Path | None = None
@@ -71,6 +72,9 @@ class Settings:
             host=os.getenv("ASSET_HUB_HOST", "127.0.0.1"),
             port=int(os.getenv("ASSET_HUB_PORT", "5000")),
             demo_mode=_as_bool(os.getenv("ASSET_HUB_DEMO_MODE"), True),
+            allow_test_reset=_as_bool(
+                os.getenv("ASSET_HUB_ALLOW_TEST_RESET"), False
+            ),
             secret_key=os.getenv("ASSET_HUB_SECRET_KEY", "local-development-only"),
             supplier_file=(
                 Path(raw_supplier_file).expanduser().resolve() if raw_supplier_file else None
