@@ -1,0 +1,62 @@
+.git
+.github
+.venv
+venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.codex-temp
+**/__pycache__
+**/*.py[cod]
+*.egg-info
+.coverage
+htmlcov
+
+# Local secrets and configuration must not enter the build context.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Runtime state belongs on the Render persistent disk.
+var
+instance
+outputs
+mail_pdf_cache
+chungtu_pdf
+*.db
+*.sqlite
+*.sqlite3
+
+# Operational evidence and personal/accounting data must never enter an image.
+*.eml
+*.msg
+*.pdf
+*.docx
+*.xls
+*.xlsx
+*.xlsm
+*.csv
+*.tsv
+*.lnk
+~$*
+**/*.eml
+**/*.msg
+**/*.pdf
+**/*.docx
+**/*.xls
+**/*.xlsx
+**/*.xlsm
+**/*.csv
+**/*.tsv
+**/*.lnk
+**/~$*
+
+# Deliberately sanitised application template required at runtime.
+!src/asset_compensation/templates/accounting_import_template.xlsx
+
+# Generated frontend and local QA artifacts.
+frontend/node_modules
+frontend/dist
+src/asset_compensation/web/static/dist
+tmp*

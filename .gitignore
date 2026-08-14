@@ -1,0 +1,46 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.codex-temp/
+/tmp*/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+
+# Runtime state and generated artifacts
+var/
+instance/
+outputs/
+mail_pdf_cache/
+chungtu_pdf/
+*.db
+*.sqlite
+*.sqlite3
+
+# Never commit operational or personal data
+*.eml
+*.msg
+*.pdf
+*.docx
+*.xls
+*.xlsx
+*.xlsm
+*.csv
+*.tsv
+*.lnk
+~$*
+
+# Allow deliberately sanitised fixtures
+!tests/fixtures/**/*.eml
+!tests/fixtures/**/*.csv
+!examples/**/*.csv
+!src/asset_compensation/templates/accounting_import_template.xlsx

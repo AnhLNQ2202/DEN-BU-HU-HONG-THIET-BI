@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Pin pnpm
+        run: corepack prepare pnpm@11.19.0 --activate
+      - name: Install frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev,email]"
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: pytest --cov=asset_compensation --cov-report=term-missing

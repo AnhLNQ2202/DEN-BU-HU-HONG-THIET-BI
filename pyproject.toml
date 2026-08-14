@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asset-compensation-hub"
+version = "0.1.0"
+description = "A safe, auditable workflow for IT asset compensation cases."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "AnhLNQ2202" }]
+dependencies = [
+  "Flask>=3.0,<4",
+  "openpyxl>=3.1,<4",
+]
+
+[project.optional-dependencies]
+email = ["lxml>=5,<7"]
+windows = ["pywin32>=306", "pypdf>=5,<7"]
+deploy = ["gunicorn>=26,<27"]
+dev = [
+  "pytest>=8,<10",
+  "pytest-cov>=5,<8",
+  "ruff>=0.8,<1",
+]
+
+[project.scripts]
+asset-hub = "asset_compensation.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+asset_compensation = [
+  "web/templates/*.html",
+  "web/static/*.css",
+  "web/static/*.js",
+  "web/static/dist/*.css",
+  "web/static/dist/*.js",
+  "web/static/dist/*.html",
+  "templates/*.xlsx",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --disable-warnings --strict-markers"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
