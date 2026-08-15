@@ -58,7 +58,7 @@ Snapshot hiện tại được cập nhật ngày **2026-08-16**:
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Candidate local gate | 372 collected = 370 pass + 2 skip; coverage 82%; Ruff/diff-check pass |
+| Candidate local gate | 372 collected = 370 pass + 2 skip; coverage 82%; Ruff/diff-check + production Docker build pass |
 | Frontend candidate | 3 Node contract tests; Vite 51 modules; two builds byte-for-byte stable |
 | Candidate deploy status | Chưa push/CI/deploy tại thời điểm snapshot này; M365 env vẫn chủ động để trống |
 | Release verdict | Local staging gate xanh; phải chờ GitHub CI Docker rồi mới Manual Deploy; chưa phải production multi-user |
@@ -1492,6 +1492,8 @@ trong tài liệu là HEAD bất biến.
   82%; focused parser/upload/Tran/companion/Add-in gate: 64 passed; frontend Node
   contract: 3 passed; Ruff toàn repo và `git diff --check` pass;
 - Vite 5.4.14 production build pass 51 modules và regenerate tracked dist;
+- production Docker build local pass bằng Docker Desktop Linux engine; image
+  candidate `asset-compensation-hub:parser-ui-candidate` được đóng gói thành công;
 - NganTLT chỉ được audit bằng **5 EML gốc local**, không có mẫu trong mailbox
   NganTLT để UAT. Cả 5 đi qua exact Add-in companion upload route, bytes retained
   khớp input và sinh đúng aggregate 3 DAMAGED + 2 LOST không warning. Đây không
