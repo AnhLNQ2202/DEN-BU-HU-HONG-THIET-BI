@@ -341,10 +341,6 @@ class BridgeGui:
         code = self.code_vars[role].get()
 
         def work() -> tuple[HubClient, int]:
-            if "__ASSET_HUB_ORIGIN__" in raw_origin:
-                raise BridgeError(
-                    "Link tải chưa gắn địa chỉ Product. Hãy tải lại từ trang Hướng dẫn."
-                )
             origin = normalize_origin(raw_origin)
             client = HubClient(origin, role)
             session = client.pair(code)

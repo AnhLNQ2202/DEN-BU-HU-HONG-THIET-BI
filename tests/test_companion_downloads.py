@@ -78,9 +78,12 @@ def test_manifest_and_bridge_render_only_the_configured_origin() -> None:
             f"asset-hub-outlook-bridge/{filename}" for filename in DOWNLOAD_FILES
         }
         assert set(archive.namelist()) == expected
+        bridge_app = archive.read("asset-hub-outlook-bridge/app.py").decode("utf-8")
         combined = b"\n".join(archive.read(name) for name in sorted(expected))
     assert b"__ASSET_HUB_ORIGIN__" not in combined
     assert _ORIGIN.encode("ascii") in combined
+    assert f'DEFAULT_SERVER_URL = "{_ORIGIN}"' in bridge_app
+    assert f'if "{_ORIGIN}" in raw_origin:' not in bridge_app
     assert b"__pycache__" not in combined
     assert b"site-packages" not in combined
 
