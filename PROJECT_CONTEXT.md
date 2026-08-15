@@ -47,16 +47,17 @@ Snapshot này được lập ngày **2026-08-15**:
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
 | Branch tích hợp | `agent/react-trannnb-team-dev` |
-| Commit product đã deploy | `714253ae4888acade49933826bb66bcb509ffcbb` |
-| Draft PR | [PR #3](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/3) |
+| Commit template/Draft Mail đã publish | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
+| `main` tại snapshot | `c8807c830e46f588990bd2aeb222c2946dc849aa` |
+| Draft PR hiện tại | [PR #5](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/5) |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Render deploy | `714253a` ở trạng thái `live` |
+| Render deploy quan sát gần nhất | `e67f08b`; thay đổi `9e17959` **chưa deploy** tại snapshot |
 | Health | `/api/health` trả `200`; `/` không có auth trả `401` |
-| CI | Hai check `quality` của PR ở commit trên đều `SUCCESS` |
-| CI Linux exact commit | 199 test pass, 85% statement coverage |
-| QA Windows độc lập | 197 pass, 2 skip theo capability/privilege môi trường |
+| CI | Hai check `quality` của PR #5 trên exact commit đều `SUCCESS` |
+| CI Linux exact commit | 251 test pass, 85% statement coverage |
+| QA Windows độc lập | 249 pass, 2 skip theo capability/privilege môi trường |
 | Frontend | Vite build ổn định, 47 modules |
 | Release verdict | Đủ điều kiện staging; chưa phải production multi-user |
 
@@ -920,9 +921,12 @@ Checklist authenticated:
 6. Upload FA&GL/CCDC synthetic, resolve/export/draft.
 7. Clear test data và xác nhận dashboard/reference về empty.
 
-Snapshot 2026-08-15 đã xác nhận deploy live, health 200, auth 401, Gunicorn boot
-và WeasyPrint 68.1 được cài. Authenticated cloud workflow chưa được automation
-chạy vì AI không đọc/chia sẻ secret Basic Auth; operator cần chạy checklist trên.
+Snapshot 2026-08-15 đã xác nhận deploy đang live ở commit cũ `e67f08b`, health
+200, auth 401, Gunicorn boot và WeasyPrint 68.1 được cài. Commit template/Draft
+Mail `9e17959` đã push/CI xanh nhưng chưa Manual Deploy. Authenticated cloud
+workflow chưa được automation chạy vì AI không đọc/chia sẻ secret Basic Auth;
+operator cần chạy checklist trên. Manual Deploy/redeploy có thể xóa toàn bộ dữ
+liệu `/tmp/asset-hub-staging`, nên phải lấy xác nhận của user ngay trước thao tác.
 
 ### 14.3 GreenNode
 
@@ -977,15 +981,17 @@ error, responsive và console. Nếu thay workbook/PDF: mở artifact thật b�
 6. production Docker build;
 7. GreenNode Compose config validation.
 
-Không push release khi CI của exact commit chưa xanh. Render staging dùng
-`autoDeployTrigger: checksPass`.
+Không push release khi CI của exact commit chưa xanh. Blueprint khai báo
+`autoDeployTrigger: checksPass`, nhưng Render Console hiện được vận hành theo
+Manual Deploy; không được suy ra rằng push GitHub đã làm code mới lên staging.
 
 ### 15.3 Bằng chứng release gần nhất
 
 - Independent QA: không còn P0/P1, verdict staging conditional.
-- CI Linux của exact commit: 199 pass trong 26,80 giây, 85% coverage (5.993
-  statements, 917 missed).
-- QA Windows độc lập: 197 pass; 2 skip là native Weasy/Pango hoặc symlink
+- CI Linux của exact commit `9e17959`: 251 pass trong 29,23 giây, 85% coverage
+  (6.476 statements, 967 missed); frontend, Ruff, production Docker build và
+  GreenNode Compose validation cùng workflow đều xanh.
+- QA Windows độc lập: 249 pass; 2 skip là native Weasy/Pango hoặc symlink
   privilege tùy host, không phải test failure.
 - Vite build hai lần byte-for-byte ổn định tại snapshot.
 - Local UI smoke giữ logo/title/orange tabs/six cards/dark table/layout ở 1440 px,
@@ -994,8 +1000,9 @@ Không push release khi CI của exact commit chưa xanh. Render staging dùng
   hiện tại sinh một case, synthetic tests bao phủ multi-case; Word tạo PDF 2–4
   trang/mail; fail-on-overflow không bỏ trang; retry 4 pages tạo merged 20-page
   readable PDF. Exact amounts/identities bị cố ý không đưa vào repo này.
-- Template scans: chỉ hai sanitized `.xlsx`, không VBA/externalLinks/embedding/
-  ActiveX/OLE/customXml/PII.
+- Template scans: chỉ hai sanitized `.xlsx`; Tran template giữ active/hidden
+  sheet state, filter/view/page setup và style gốc nhưng không có VBA,
+  externalLinks, embedding, ActiveX/OLE, customXml, email pattern hay case data.
 
 ### 15.4 Khoảng trống automation hiện tại
 
@@ -1069,7 +1076,7 @@ giới hạn/next step, không được quảng bá là đã production-ready:
 
 1. Operator đăng nhập staging và chạy synthetic end-to-end cloud PDF + Tran;
    automation không được lấy secret từ Render.
-2. Review draft PR #3, merge vào `main` khi owner chấp thuận; sau merge tạo/tag
+2. Review draft PR #5, merge vào `main` khi owner chấp thuận; sau merge tạo/tag
    release nếu cần cho hackathon.
 3. UAT bằng approved operational accounting template/config trên môi trường
    private; Finance xác nhận 30-column output và GL mapping.
