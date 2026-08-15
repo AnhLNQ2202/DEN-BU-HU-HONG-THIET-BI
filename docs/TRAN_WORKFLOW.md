@@ -38,6 +38,12 @@ It reads B/G/H/J/L/P/V/Y/AA and returns `MATCHED`, `NOT_FOUND`, or `AMBIGUOUS`. 
 ambiguous Tag Number is never selected automatically. The accounting life in column Y is
 validated as part of the source schema but is never used for the compensation schedule.
 
+Managed uploads tolerate only inert legacy `externalBook` metadata that points
+to local `file:` URIs and has no cached rows, external formulas, or external
+defined names. The indexes open uploaded references with `keep_links=False`.
+Remote links, DDE/OLE, active content, embeddings, and links used by workbook
+expressions remain hard failures; the product never follows an external link.
+
 `CcdcWorkbookIndex` supports:
 
 - `Define`: `Product Type`, `Barcode`, `Group Type`;

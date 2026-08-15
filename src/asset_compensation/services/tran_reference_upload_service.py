@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -15,7 +16,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any, BinaryIO
+from urllib.parse import urlsplit
 from uuid import uuid4
+from xml.parsers import expat
 
 from asset_compensation.adapters import (
     CcdcWorkbookIndex,
@@ -28,7 +31,106 @@ MAX_TRAN_REFERENCE_FILE_BYTES = 50 * 1024 * 1024
 _MAX_EXPANDED_BYTES = 250 * 1024 * 1024
 _MAX_ARCHIVE_ENTRIES = 5_000
 _MAX_COMPRESSION_RATIO = 200
+_MAX_EXTERNAL_LINK_XML_BYTES = 1024 * 1024
+_MAX_EXTERNAL_LINK_RELS_BYTES = 256 * 1024
+_MAX_EXTERNAL_LINK_ELEMENTS = 4_096
+_MAX_EXTERNAL_LINK_DEPTH = 4
+_MAX_EXTERNAL_LINK_ATTRIBUTES = 8
+_MAX_EXTERNAL_LINK_ATTRIBUTE_CHARS = 4_096
+_MAX_EXTERNAL_LINK_TEXT_CHARS = 4_096
+_MAX_EXTERNAL_LINK_RELATIONSHIPS = 128
+_MAX_RELATIONSHIP_XML_BYTES = 4 * 1024 * 1024
+_MAX_RELATIONSHIP_XML_ELEMENTS = 10_000
+_MAX_RELATIONSHIP_XML_DEPTH = 16
+_MAX_RELATIONSHIP_XML_ATTRIBUTES = 32
+_MAX_RELATIONSHIP_XML_ATTRIBUTE_CHARS = 64 * 1024
+_MAX_RELATIONSHIP_XML_TEXT_CHARS = 256 * 1024
+_MAX_FORMULA_XML_PART_BYTES = 128 * 1024 * 1024
+_MAX_FORMULA_XML_ELEMENTS = 5_000_000
+_MAX_FORMULA_XML_DEPTH = 64
+_MAX_FORMULA_XML_ATTRIBUTES = 128
+_MAX_FORMULA_XML_ATTRIBUTE_CHARS = 64 * 1024
+_MAX_FORMULA_TEXT_CHARS = 32 * 1024
+_XML_SCAN_CHUNK_BYTES = 64 * 1024
 _VERSION_RE = re.compile(r"[0-9a-f]{32}")
+_EXTERNAL_LINK_PART_RE = re.compile(
+    r"xl/externalLinks/externalLink([1-9][0-9]*)\.xml"
+)
+_EXTERNAL_LINK_RELS_PART_RE = re.compile(
+    r"xl/externalLinks/_rels/externalLink([1-9][0-9]*)\.xml\.rels"
+)
+_XML_DTD_RE = re.compile(br"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
+_FORMULA_TEXT_LOCAL_NAMES = frozenset(
+    {
+        "calculatedcolumnformula",
+        "definedname",
+        "f",
+        "formula",
+        "formula1",
+        "formula2",
+        "totalsrowformula",
+    }
+)
+_FORMULA_ATTRIBUTE_LOCAL_NAMES = frozenset(
+    {
+        "calculatedcolumnformula",
+        "formula",
+        "formula1",
+        "formula2",
+        "refersto",
+        "totalsrowformula",
+    }
+)
+_FORMULA_REFERENCE_DELIMITERS = frozenset("+-*/^&=<>(),;{}:%[]")
+_EXTERNAL_LINK_GUIDANCE = (
+    "XLSX external workbook metadata must be unused local-file metadata; "
+    "remove active or remote workbook links and save the file again"
+)
+_SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_OFFICE_RELATIONSHIP_NS = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+)
+_PACKAGE_RELATIONSHIP_NS = (
+    "http://schemas.openxmlformats.org/package/2006/relationships"
+)
+_EXTERNAL_LINK_2021_NS = (
+    "http://schemas.microsoft.com/office/spreadsheetml/2021/extlinks2021"
+)
+_EXTERNAL_LINK_PATH_RELATIONSHIP = (
+    f"{_OFFICE_RELATIONSHIP_NS}/externalLinkPath"
+)
+_EXTERNAL_LINK_TAG = f"{{{_SPREADSHEET_NS}}}externalLink"
+_EXTERNAL_BOOK_TAG = f"{{{_SPREADSHEET_NS}}}externalBook"
+_SHEET_NAMES_TAG = f"{{{_SPREADSHEET_NS}}}sheetNames"
+_SHEET_NAME_TAG = f"{{{_SPREADSHEET_NS}}}sheetName"
+_SHEET_DATA_SET_TAG = f"{{{_SPREADSHEET_NS}}}sheetDataSet"
+_SHEET_DATA_TAG = f"{{{_SPREADSHEET_NS}}}sheetData"
+_ALTERNATE_URLS_TAG = f"{{{_EXTERNAL_LINK_2021_NS}}}alternateUrls"
+_ABSOLUTE_URL_TAG = f"{{{_EXTERNAL_LINK_2021_NS}}}absoluteUrl"
+_ALLOWED_EXTERNAL_LINK_TAGS = frozenset(
+    {
+        _EXTERNAL_LINK_TAG,
+        _EXTERNAL_BOOK_TAG,
+        _SHEET_NAMES_TAG,
+        _SHEET_NAME_TAG,
+        _SHEET_DATA_SET_TAG,
+        _SHEET_DATA_TAG,
+        _ALTERNATE_URLS_TAG,
+        _ABSOLUTE_URL_TAG,
+    }
+)
+_ALLOWED_EXTERNAL_LINK_CHILDREN = {
+    _EXTERNAL_LINK_TAG: frozenset({_EXTERNAL_BOOK_TAG}),
+    _EXTERNAL_BOOK_TAG: frozenset(
+        {_ALTERNATE_URLS_TAG, _SHEET_NAMES_TAG, _SHEET_DATA_SET_TAG}
+    ),
+    _ALTERNATE_URLS_TAG: frozenset({_ABSOLUTE_URL_TAG}),
+    _SHEET_NAMES_TAG: frozenset({_SHEET_NAME_TAG}),
+    _SHEET_DATA_SET_TAG: frozenset({_SHEET_DATA_TAG}),
+    _ABSOLUTE_URL_TAG: frozenset(),
+    _SHEET_NAME_TAG: frozenset(),
+    _SHEET_DATA_TAG: frozenset(),
+}
 _MIME_TYPES = frozenset(
     {
         "",
@@ -42,6 +144,113 @@ _MIME_TYPES = frozenset(
 def _private_mode(path: Path, mode: int) -> None:
     with suppress(OSError):
         path.chmod(mode)
+
+
+def _skip_formula_string_literal(formula: str, opening_quote: int) -> int:
+    """Return the first offset after an Excel double-quoted string literal."""
+
+    cursor = opening_quote + 1
+    while cursor < len(formula):
+        if formula[cursor] != '"':
+            cursor += 1
+            continue
+        if cursor + 1 < len(formula) and formula[cursor + 1] == '"':
+            cursor += 2
+            continue
+        return cursor + 1
+    return len(formula)
+
+
+def _formula_bracket_end(formula: str, opening_bracket: int) -> tuple[int | None, bool]:
+    """Find a balanced bracket token while respecting formula string literals."""
+
+    depth = 1
+    nested = False
+    cursor = opening_bracket + 1
+    while cursor < len(formula):
+        character = formula[cursor]
+        if character == '"':
+            cursor = _skip_formula_string_literal(formula, cursor)
+            continue
+        if character == "[":
+            depth += 1
+            nested = True
+        elif character == "]":
+            depth -= 1
+            if depth == 0:
+                return cursor, nested
+        cursor += 1
+    return None, nested
+
+
+def _has_table_reference_prefix(
+    formula: str,
+    opening_bracket: int,
+) -> bool:
+    """Return whether a bracket is directly qualified by an Excel table name."""
+
+    cursor = opening_bracket - 1
+    previous = formula[cursor] if cursor >= 0 else ""
+    return bool(
+        previous
+        and (previous.isalnum() or previous in "_.")
+    )
+
+
+def _has_active_reference_suffix(formula: str, closing_bracket: int) -> bool:
+    """Return whether a bracket token is followed by a sheet/name context."""
+
+    suffix = closing_bracket + 1
+    if suffix >= len(formula):
+        return False
+    following = formula[suffix]
+    return bool(
+        not following.isspace()
+        and (
+            following == "!"
+            or following not in _FORMULA_REFERENCE_DELIMITERS
+        )
+    )
+
+
+def _has_external_workbook_reference(formula: str) -> bool:
+    """Detect active Excel workbook references without matching strings/tables.
+
+    Excel serializes external sources as a bracketed link index or filename,
+    followed by a sheet/name context (for example ``[1]Sheet!A1`` or
+    ``[Book.csv]DefinedName``). Brackets inside double-quoted strings and table
+    structured references are inert here.
+    """
+
+    cursor = 0
+    while cursor < len(formula):
+        character = formula[cursor]
+        if character == '"':
+            cursor = _skip_formula_string_literal(formula, cursor)
+            continue
+        if character != "[":
+            cursor += 1
+            continue
+
+        closing_bracket, nested = _formula_bracket_end(formula, cursor)
+        if closing_bracket is None:
+            return False
+        token = formula[cursor + 1 : closing_bracket].strip()
+        if _has_table_reference_prefix(formula, cursor):
+            cursor = closing_bracket + 1
+            continue
+
+        if token and _has_active_reference_suffix(formula, closing_bracket):
+            return True
+
+        # Marker and nested brackets are structured only after ruling out an
+        # active post-bracket sheet/name suffix. This prevents crafted external
+        # filenames such as ``[#Book.csv]Sheet!A1`` from bypassing validation.
+        if nested or token.startswith(("[", "@", "#")):
+            cursor = closing_bracket + 1
+            continue
+        cursor = closing_bracket + 1
+    return False
 
 
 class TranReferenceUploadError(ValidationError):
@@ -282,6 +491,8 @@ class TranReferenceUploadService:
                         f"{role} XLSX contains duplicate archive entries"
                     )
                 expanded = 0
+                external_link_parts: dict[str, zipfile.ZipInfo] = {}
+                external_link_rels_parts: dict[str, zipfile.ZipInfo] = {}
                 for entry in entries:
                     normalized = entry.filename.replace("\\", "/")
                     parts = normalized.split("/")
@@ -305,7 +516,6 @@ class TranReferenceUploadService:
                     folded = normalized.casefold()
                     if (
                         folded == "xl/vbaproject.bin"
-                        or folded.startswith("xl/externallinks/")
                         or folded.startswith("xl/embeddings/")
                         or folded.startswith("xl/activex/")
                         or folded.startswith("xl/oleobjects/")
@@ -313,16 +523,369 @@ class TranReferenceUploadService:
                         raise TranReferenceUploadError(
                             f"{role} XLSX contains unsupported active, linked, or embedded content"
                         )
-                    if folded.endswith(".rels"):
+                    if folded.startswith("xl/externallinks/"):
+                        link_match = _EXTERNAL_LINK_PART_RE.fullmatch(normalized)
+                        rels_match = _EXTERNAL_LINK_RELS_PART_RE.fullmatch(normalized)
+                        if link_match:
+                            external_link_parts[link_match.group(1)] = entry
+                        elif rels_match:
+                            external_link_rels_parts[rels_match.group(1)] = entry
+                        else:
+                            raise TranReferenceUploadError(
+                                f"{role} {_EXTERNAL_LINK_GUIDANCE}"
+                            )
+                    elif folded.endswith(".rels"):
                         TranReferenceUploadService._reject_external_relationships(
                             archive,
                             entry,
                             role,
                         )
+                if external_link_parts or external_link_rels_parts:
+                    TranReferenceUploadService._validate_orphan_external_books(
+                        archive,
+                        external_link_parts,
+                        external_link_rels_parts,
+                        role,
+                    )
+                TranReferenceUploadService._reject_external_workbook_expressions(
+                    archive,
+                    entries,
+                    role,
+                )
         except zipfile.BadZipFile as exc:
             raise TranReferenceUploadError(
                 f"{role} file is not a valid XLSX workbook"
             ) from exc
+
+    @staticmethod
+    def _validate_orphan_external_books(
+        archive: zipfile.ZipFile,
+        link_parts: dict[str, zipfile.ZipInfo],
+        rels_parts: dict[str, zipfile.ZipInfo],
+        role: str,
+    ) -> None:
+        """Allow inert local-file link metadata while rejecting executable link use."""
+
+        if link_parts.keys() != rels_parts.keys():
+            raise TranReferenceUploadError(f"{role} {_EXTERNAL_LINK_GUIDANCE}")
+        for link_number in sorted(link_parts, key=int):
+            TranReferenceUploadService._validate_external_book_part(
+                archive,
+                link_parts[link_number],
+                rels_parts[link_number],
+                role,
+            )
+
+    @staticmethod
+    def _validate_external_book_part(
+        archive: zipfile.ZipFile,
+        link_entry: zipfile.ZipInfo,
+        rels_entry: zipfile.ZipInfo,
+        role: str,
+    ) -> None:
+        unsupported = f"{role} {_EXTERNAL_LINK_GUIDANCE}"
+        link_payload = TranReferenceUploadService._bounded_external_link_xml(
+            archive,
+            link_entry,
+            _MAX_EXTERNAL_LINK_XML_BYTES,
+            role,
+            "definition",
+        )
+        rels_payload = TranReferenceUploadService._bounded_external_link_xml(
+            archive,
+            rels_entry,
+            _MAX_EXTERNAL_LINK_RELS_BYTES,
+            role,
+            "relationship",
+        )
+
+        relationship_id_attribute = f"{{{_OFFICE_RELATIONSHIP_NS}}}id"
+        referenced_relationships: set[str] = set()
+        stack: list[str] = []
+        element_count = 0
+        root_child_count = 0
+        try:
+            for event, element in ET.iterparse(
+                io.BytesIO(link_payload),
+                events=("start", "end"),
+            ):
+                if event == "start":
+                    element_count += 1
+                    if element_count > _MAX_EXTERNAL_LINK_ELEMENTS:
+                        raise TranReferenceUploadError(unsupported)
+                    depth = len(stack) + 1
+                    if depth > _MAX_EXTERNAL_LINK_DEPTH:
+                        raise TranReferenceUploadError(unsupported)
+                    if element.tag not in _ALLOWED_EXTERNAL_LINK_TAGS:
+                        raise TranReferenceUploadError(unsupported)
+                    if stack:
+                        if element.tag not in _ALLOWED_EXTERNAL_LINK_CHILDREN[stack[-1]]:
+                            raise TranReferenceUploadError(unsupported)
+                        if len(stack) == 1:
+                            root_child_count += 1
+                    elif element.tag != _EXTERNAL_LINK_TAG:
+                        raise TranReferenceUploadError(unsupported)
+                    if len(element.attrib) > _MAX_EXTERNAL_LINK_ATTRIBUTES:
+                        raise TranReferenceUploadError(unsupported)
+                    if any(
+                        len(str(value)) > _MAX_EXTERNAL_LINK_ATTRIBUTE_CHARS
+                        for value in element.attrib.values()
+                    ):
+                        raise TranReferenceUploadError(unsupported)
+                    relationship_id = element.attrib.get(relationship_id_attribute)
+                    if relationship_id:
+                        referenced_relationships.add(relationship_id)
+                    stack.append(element.tag)
+                    continue
+
+                if (
+                    len(element.text or "") > _MAX_EXTERNAL_LINK_TEXT_CHARS
+                    or len(element.tail or "") > _MAX_EXTERNAL_LINK_TEXT_CHARS
+                    or (element.text and element.text.strip())
+                    or (element.tail and element.tail.strip())
+                    or not stack
+                    or stack[-1] != element.tag
+                ):
+                    raise TranReferenceUploadError(unsupported)
+                stack.pop()
+                element.clear()
+        except ET.ParseError as exc:
+            raise TranReferenceUploadError(
+                f"{role} XLSX contains an invalid external workbook definition"
+            ) from exc
+        if stack or root_child_count != 1 or not referenced_relationships:
+            raise TranReferenceUploadError(unsupported)
+
+        relationships_tag = f"{{{_PACKAGE_RELATIONSHIP_NS}}}Relationships"
+        relationship_tag = f"{{{_PACKAGE_RELATIONSHIP_NS}}}Relationship"
+        relationship_ids: set[str] = set()
+        stack = []
+        relationship_count = 0
+        try:
+            for event, relationship in ET.iterparse(
+                io.BytesIO(rels_payload),
+                events=("start", "end"),
+            ):
+                if event == "start":
+                    depth = len(stack) + 1
+                    if (
+                        depth > 2
+                        or (depth == 1 and relationship.tag != relationships_tag)
+                        or (depth == 2 and relationship.tag != relationship_tag)
+                        or len(relationship.attrib) > _MAX_EXTERNAL_LINK_ATTRIBUTES
+                        or any(
+                            len(str(value)) > _MAX_EXTERNAL_LINK_ATTRIBUTE_CHARS
+                            for value in relationship.attrib.values()
+                        )
+                    ):
+                        raise TranReferenceUploadError(unsupported)
+                    stack.append(relationship.tag)
+                    if depth == 1:
+                        continue
+
+                    relationship_count += 1
+                    if relationship_count > _MAX_EXTERNAL_LINK_RELATIONSHIPS:
+                        raise TranReferenceUploadError(unsupported)
+                    relationship_id = str(relationship.attrib.get("Id") or "").strip()
+                    target = str(relationship.attrib.get("Target") or "").strip()
+                    try:
+                        target_scheme = urlsplit(target).scheme.casefold()
+                    except ValueError as exc:
+                        raise TranReferenceUploadError(unsupported) from exc
+                    if (
+                        not relationship_id
+                        or relationship_id in relationship_ids
+                        or relationship.attrib.get("Type")
+                        != _EXTERNAL_LINK_PATH_RELATIONSHIP
+                        or relationship.attrib.get("TargetMode") != "External"
+                        or target_scheme != "file"
+                    ):
+                        raise TranReferenceUploadError(unsupported)
+                    relationship_ids.add(relationship_id)
+                    continue
+
+                if (
+                    len(relationship.text or "") > _MAX_EXTERNAL_LINK_TEXT_CHARS
+                    or len(relationship.tail or "") > _MAX_EXTERNAL_LINK_TEXT_CHARS
+                    or (relationship.text and relationship.text.strip())
+                    or (relationship.tail and relationship.tail.strip())
+                    or not stack
+                    or stack[-1] != relationship.tag
+                ):
+                    raise TranReferenceUploadError(unsupported)
+                stack.pop()
+                relationship.clear()
+        except ET.ParseError as exc:
+            raise TranReferenceUploadError(
+                f"{role} XLSX contains an invalid external workbook relationship"
+            ) from exc
+        if stack or relationship_ids != referenced_relationships:
+            raise TranReferenceUploadError(unsupported)
+
+    @staticmethod
+    def _bounded_external_link_xml(
+        archive: zipfile.ZipFile,
+        entry: zipfile.ZipInfo,
+        size_limit: int,
+        role: str,
+        label: str,
+    ) -> bytes:
+        if entry.file_size > size_limit:
+            raise TranReferenceUploadError(
+                f"{role} XLSX external workbook {label} exceeds the safe per-link size limit; "
+                "remove workbook link caches and save the file again"
+            )
+        payload = archive.read(entry)
+        if len(payload) > size_limit or _XML_DTD_RE.search(payload):
+            raise TranReferenceUploadError(f"{role} {_EXTERNAL_LINK_GUIDANCE}")
+        return payload
+
+    @staticmethod
+    def _reject_external_workbook_expressions(
+        archive: zipfile.ZipFile,
+        entries: list[zipfile.ZipInfo],
+        role: str,
+    ) -> None:
+        for entry in entries:
+            normalized = entry.filename.replace("\\", "/")
+            folded = normalized.casefold()
+            if (
+                not folded.startswith("xl/")
+                or not folded.endswith(".xml")
+                or folded.startswith("xl/externallinks/")
+                or folded == "xl/sharedstrings.xml"
+            ):
+                continue
+            TranReferenceUploadService._scan_workbook_expression_part(
+                archive,
+                entry,
+                role,
+                normalized,
+            )
+
+    @staticmethod
+    def _scan_workbook_expression_part(
+        archive: zipfile.ZipFile,
+        entry: zipfile.ZipInfo,
+        role: str,
+        normalized: str,
+    ) -> None:
+        """Stream one XML part with hard limits and inspect formula contexts only."""
+
+        def reject_complexity() -> None:
+            raise TranReferenceUploadError(
+                f"{role} XLSX XML part {normalized} exceeds the safe XML complexity limit"
+            )
+
+        def reject_external_formula() -> None:
+            raise TranReferenceUploadError(
+                f"{role} XLSX contains an external workbook formula or defined name in "
+                f"{normalized}; break the link or replace it with its current value"
+            )
+
+        if entry.file_size > _MAX_FORMULA_XML_PART_BYTES:
+            raise TranReferenceUploadError(
+                f"{role} XLSX XML part {normalized} exceeds the safe per-part size limit"
+            )
+
+        depth = 0
+        element_count = 0
+        formula_depth: int | None = None
+        formula_name: str | None = None
+        formula_chunks: list[str] = []
+        formula_characters = 0
+
+        def start_element(name: str, attributes: dict[str, str]) -> None:
+            nonlocal depth, element_count
+            nonlocal formula_depth, formula_name, formula_chunks, formula_characters
+
+            depth += 1
+            element_count += 1
+            if (
+                depth > _MAX_FORMULA_XML_DEPTH
+                or element_count > _MAX_FORMULA_XML_ELEMENTS
+                or len(attributes) > _MAX_FORMULA_XML_ATTRIBUTES
+                or sum(len(key) + len(value) for key, value in attributes.items())
+                > _MAX_FORMULA_XML_ATTRIBUTE_CHARS
+            ):
+                reject_complexity()
+
+            for attribute_name, value in attributes.items():
+                local_attribute_name = attribute_name.rsplit("}", 1)[-1].casefold()
+                if local_attribute_name not in _FORMULA_ATTRIBUTE_LOCAL_NAMES:
+                    continue
+                if len(value) > _MAX_FORMULA_TEXT_CHARS:
+                    reject_complexity()
+                if _has_external_workbook_reference(value):
+                    reject_external_formula()
+
+            local_name = name.rsplit("}", 1)[-1].casefold()
+            if local_name in _FORMULA_TEXT_LOCAL_NAMES:
+                if formula_depth is not None:
+                    reject_complexity()
+                formula_depth = depth
+                formula_name = name
+                formula_chunks = []
+                formula_characters = 0
+
+        def character_data(value: str) -> None:
+            nonlocal formula_characters
+
+            if formula_depth is None:
+                return
+            formula_characters += len(value)
+            if formula_characters > _MAX_FORMULA_TEXT_CHARS:
+                reject_complexity()
+            formula_chunks.append(value)
+
+        def end_element(name: str) -> None:
+            nonlocal depth, formula_depth, formula_name
+            nonlocal formula_chunks, formula_characters
+
+            if formula_depth == depth:
+                if name != formula_name:
+                    reject_complexity()
+                formula = "".join(formula_chunks)
+                if _has_external_workbook_reference(formula):
+                    reject_external_formula()
+                formula_depth = None
+                formula_name = None
+                formula_chunks = []
+                formula_characters = 0
+            depth -= 1
+
+        def reject_xml_declaration(*_arguments: object) -> int:
+            reject_complexity()
+            return 0
+
+        parser = expat.ParserCreate(namespace_separator="}")
+        parser.StartElementHandler = start_element
+        parser.CharacterDataHandler = character_data
+        parser.EndElementHandler = end_element
+        parser.StartDoctypeDeclHandler = reject_xml_declaration
+        parser.EntityDeclHandler = reject_xml_declaration
+        parser.ExternalEntityRefHandler = reject_xml_declaration
+        parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+
+        bytes_read = 0
+        try:
+            with archive.open(entry) as stream:
+                while chunk := stream.read(_XML_SCAN_CHUNK_BYTES):
+                    bytes_read += len(chunk)
+                    if bytes_read > _MAX_FORMULA_XML_PART_BYTES:
+                        raise TranReferenceUploadError(
+                            f"{role} XLSX XML part {normalized} exceeds the safe per-part "
+                            "size limit"
+                        )
+                    parser.Parse(chunk, False)
+                parser.Parse(b"", True)
+        except expat.ExpatError as exc:
+            raise TranReferenceUploadError(
+                f"{role} XLSX contains an invalid workbook expression definition in "
+                f"{normalized}"
+            ) from exc
+        if depth != 0 or formula_depth is not None:
+            reject_complexity()
 
     @staticmethod
     def _reject_external_relationships(
@@ -332,22 +895,88 @@ class TranReferenceUploadService:
     ) -> None:
         """Reject every OOXML relationship that can resolve outside the upload."""
 
-        try:
-            with archive.open(entry) as relationship_stream:
-                for _, element in ET.iterparse(relationship_stream, events=("end",)):
-                    attributes = {
-                        key.rsplit("}", 1)[-1].casefold(): str(value).strip().casefold()
-                        for key, value in element.attrib.items()
-                    }
-                    if attributes.get("targetmode") == "external":
-                        raise TranReferenceUploadError(
-                            f"{role} XLSX contains an external relationship"
-                        )
-                    element.clear()
-        except ET.ParseError as exc:
+        normalized = entry.filename.replace("\\", "/")
+
+        def reject_complexity() -> None:
             raise TranReferenceUploadError(
-                f"{role} XLSX contains an invalid relationship definition"
+                f"{role} XLSX relationship part {normalized} exceeds the safe relationship "
+                "XML complexity limit"
+            )
+
+        if entry.file_size > _MAX_RELATIONSHIP_XML_BYTES:
+            raise TranReferenceUploadError(
+                f"{role} XLSX relationship part {normalized} exceeds the safe per-part "
+                "size limit"
+            )
+
+        depth = 0
+        element_count = 0
+        text_characters = 0
+
+        def start_element(_name: str, attributes: dict[str, str]) -> None:
+            nonlocal depth, element_count
+
+            depth += 1
+            element_count += 1
+            if (
+                depth > _MAX_RELATIONSHIP_XML_DEPTH
+                or element_count > _MAX_RELATIONSHIP_XML_ELEMENTS
+                or len(attributes) > _MAX_RELATIONSHIP_XML_ATTRIBUTES
+                or sum(len(key) + len(value) for key, value in attributes.items())
+                > _MAX_RELATIONSHIP_XML_ATTRIBUTE_CHARS
+            ):
+                reject_complexity()
+
+            for attribute_name, value in attributes.items():
+                local_name = attribute_name.rsplit("}", 1)[-1].casefold()
+                if local_name == "targetmode" and value.strip().casefold() == "external":
+                    raise TranReferenceUploadError(
+                        f"{role} XLSX contains an external relationship"
+                    )
+
+        def character_data(value: str) -> None:
+            nonlocal text_characters
+
+            text_characters += len(value)
+            if text_characters > _MAX_RELATIONSHIP_XML_TEXT_CHARS:
+                reject_complexity()
+
+        def end_element(_name: str) -> None:
+            nonlocal depth
+
+            depth -= 1
+
+        def reject_xml_declaration(*_arguments: object) -> int:
+            reject_complexity()
+            return 0
+
+        parser = expat.ParserCreate(namespace_separator="}")
+        parser.StartElementHandler = start_element
+        parser.CharacterDataHandler = character_data
+        parser.EndElementHandler = end_element
+        parser.StartDoctypeDeclHandler = reject_xml_declaration
+        parser.EntityDeclHandler = reject_xml_declaration
+        parser.ExternalEntityRefHandler = reject_xml_declaration
+        parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+
+        bytes_read = 0
+        try:
+            with archive.open(entry) as stream:
+                while chunk := stream.read(_XML_SCAN_CHUNK_BYTES):
+                    bytes_read += len(chunk)
+                    if bytes_read > _MAX_RELATIONSHIP_XML_BYTES:
+                        raise TranReferenceUploadError(
+                            f"{role} XLSX relationship part {normalized} exceeds the safe "
+                            "per-part size limit"
+                        )
+                    parser.Parse(chunk, False)
+                parser.Parse(b"", True)
+        except expat.ExpatError as exc:
+            raise TranReferenceUploadError(
+                f"{role} XLSX contains an invalid relationship definition in {normalized}"
             ) from exc
+        if depth != 0:
+            reject_complexity()
 
     @staticmethod
     def _empty_status() -> dict[str, Any]:

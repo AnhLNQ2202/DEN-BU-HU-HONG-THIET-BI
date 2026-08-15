@@ -496,8 +496,11 @@ workspace để certification production; cần UAT với file tổ chức đã 
   Book/retirement/entity/dimensions và trả ambiguous khi không unique.
 - CCDC optional dùng Define/CMDB/BC Xuatkho để classification và earliest start
   date theo contract adapter.
-- Managed upload chỉ nhận `.xlsx`, tối đa 50 MiB/file, reject VBA, external rel,
-  ActiveX/OLE/embedding/unsafe ZIP/zip bomb và validate index trước atomic switch.
+- Managed upload chỉ nhận `.xlsx`, tối đa 50 MiB/file, reject VBA, DDE/OLE,
+  ActiveX/embedding, external formula/defined name, HTTP/external relationship,
+  unsafe ZIP/zip bomb và validate index trước atomic switch. Ngoại lệ duy nhất là
+  metadata `externalBook` trỏ `file:` đã được chứng minh mồ côi: đúng schema,
+  không cache data/công thức/name, và adapter luôn đọc với `keep_links=False`.
 - Omit CCDC để giữ current; gửi exact `clear_ccdc=true` để bỏ managed CCDC ở
   version mới.
 - External env references là read-only; managed upload được ưu tiên.
@@ -754,8 +757,10 @@ DAMAGED/LOST debit fallback phải đồng nhất; config không nhất quán ph
   theo loại file trước khi parse.
 - Custom anti-CSRF header cho multipart upload và test clear.
 - Strict JSON keys và numeric/date/enums bounds.
-- Upload byte/count/MIME/ZIP/worksheet bounds; external `.rels`, macro,
-  encryption, embeddings, ActiveX/OLE và path traversal bị reject.
+- Upload byte/count/MIME/ZIP/worksheet bounds; macro, encryption, embeddings,
+  ActiveX/OLE, path traversal và external relationships chủ động bị reject.
+  Tran reference chỉ có whitelist hẹp cho metadata `externalBook` local-file
+  mồ côi; DDE/OLE/HTTP/cached hoặc formula-backed link vẫn bị chặn.
 - Supplier/reference version activation atomic; stale staging cleanup có scope.
 - EML content-addressed SHA-256, opaque handle, integrity recheck, atomic retain
   rollback và unclassified artifact cleanup.

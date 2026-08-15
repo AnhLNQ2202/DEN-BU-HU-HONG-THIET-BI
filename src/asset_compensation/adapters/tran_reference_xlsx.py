@@ -138,7 +138,12 @@ class FaGlWorkbookIndex:
         source_path = Path(path).resolve()
         if not source_path.is_file() or source_path.suffix.lower() not in {".xlsx", ".xlsm"}:
             raise TranReferenceError("FA&GL source must be an existing .xlsx or .xlsm file")
-        workbook = load_workbook(source_path, read_only=True, data_only=True)
+        workbook = load_workbook(
+            source_path,
+            read_only=True,
+            data_only=True,
+            keep_links=False,
+        )
         indexed: dict[str, list[FaGlRecord]] = defaultdict(list)
         try:
             missing = [sheet for sheet in _FA_SHEETS if sheet not in workbook.sheetnames]
@@ -280,7 +285,12 @@ class CcdcWorkbookIndex:
         source_path = Path(path).resolve()
         if not source_path.is_file() or source_path.suffix.lower() not in {".xlsx", ".xlsm"}:
             raise TranReferenceError("CCDC source must be an existing .xlsx or .xlsm file")
-        workbook = load_workbook(source_path, read_only=True, data_only=True)
+        workbook = load_workbook(
+            source_path,
+            read_only=True,
+            data_only=True,
+            keep_links=False,
+        )
         classifications: dict[str, list[CcdcClassification]] = defaultdict(list)
         start_dates: dict[str, list[date]] = defaultdict(list)
         try:
