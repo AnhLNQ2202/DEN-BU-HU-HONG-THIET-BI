@@ -52,27 +52,29 @@ Snapshot này được lập ngày **2026-08-15**:
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
 | Branch tích hợp | `agent/react-trannnb-team-dev` |
 | Commit feature template/Draft Mail | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
+| Commit feature M365/Tran performance | `a69978f2ad6db0d399c6ce815449cd54c7502a98` |
 | Commit đã CI và đang live trên Render | `cfa1dd05bf9209939b3dddda5e04efe5e4859253` |
 | `main` tại snapshot | `58794f42955ceb396a254dedac60ceeda3ac1ce1` |
 | PR feature | [PR #5](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/5), đã merge |
-| Draft PR tài liệu hậu deploy | [PR #6](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/6) |
+| Draft PR M365/Tran performance | [PR #6](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/6) |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
 | Render deploy quan sát gần nhất | Environment rebuild `cfa1dd0`, trạng thái **live** lúc 2026-08-15 16:00 GMT+7 |
 | Health | `/api/health` trả `200`; `/` không có auth trả `401` |
-| CI | Hai check `quality` của PR #5 trên exact commit đều `SUCCESS` |
-| CI Linux exact commit | 251 test pass, 85% statement coverage |
-| QA Windows độc lập | 249 pass, 2 skip theo capability/privilege môi trường |
-| Frontend | Vite build ổn định, 47 modules |
-| Release verdict | Đủ điều kiện staging; chưa phải production multi-user |
+| CI current candidate | Hai check `quality` của PR #6 trên `a69978f` đều `SUCCESS` |
+| CI Linux current candidate | 328 test pass trong 27,42 giây, 85% statement coverage; Docker + GreenNode Compose green |
+| QA Windows current candidate | 326 pass, 2 skip theo capability/privilege môi trường; 84% coverage |
+| Frontend current candidate | Vite build ổn định, 48 modules |
+| Release verdict | Đủ điều kiện staging sau UAT; chưa phải production multi-user |
 
-> **Release candidate M365/Tran performance đang ở working tree của branch
-> `agent/react-trannnb-team-dev`.** Local final gate: Ruff pass; 328 tests
-> collected, 326 pass + 2 expected platform skips; coverage 84%; Vite 48 modules và hai lần
-> build byte-for-byte ổn định. Exact Git commit/CI còn chờ bước publish cuối của
-> root agent. Release mới **chưa được deploy Render**; phải hỏi lại user ngay
-> trước redeploy vì `/tmp` staging sẽ mất dữ liệu.
+> **Release candidate M365/Tran performance đã được push lên branch
+> `agent/react-trannnb-team-dev` tại commit `a69978f`.** Local final gate: Ruff
+> pass; 328 tests collected, 326 pass + 2 expected platform skips; coverage 84%;
+> Vite 48 modules và hai lần build byte-for-byte ổn định. Linux CI của exact
+> feature commit pass 328 tests, 85% coverage, production Docker build và
+> GreenNode Compose validation. Release mới **chưa được deploy Render**; phải hỏi
+> lại user ngay trước redeploy vì `/tmp` staging sẽ mất dữ liệu.
 
 Các giá trị trên là snapshot, không phải chân lý vĩnh viễn. AI mới phải kiểm tra
 lại bằng các lệnh ở mục 2.
@@ -1189,13 +1191,21 @@ Manual Deploy; không được suy ra rằng push GitHub đã làm code mới l�
 
 ### 15.3 Bằng chứng release gần nhất
 
-> Các con số dưới đây là historical release trước M365. Release candidate mới đã
-> vượt local gate: Ruff pass; 328 tests collected = 326 pass + 2 expected platform
-> skips; coverage 84%; Vite 48 modules build hai lần byte-for-byte ổn định; `git diff --check`
-> pass. Exact SHA, staged secret/privacy scan và CI exact SHA được root bổ sung
-> sau bước commit/push; release chưa live trên Render.
+> Release candidate M365/Tran performance ở feature commit
+> `a69978f2ad6db0d399c6ce815449cd54c7502a98`: local Ruff pass; 328 tests
+> collected = 326 pass + 2 expected platform skips; coverage 84%; Vite 48
+> modules build hai lần byte-for-byte ổn định; `git diff --check` và staged
+> secret/privacy scan pass. Linux CI exact SHA pass 328 tests trong 27,42 giây,
+> 85% coverage, production Docker build và GreenNode Compose validation. Release
+> này chưa live trên Render.
 
-- Independent QA: không còn P0/P1, verdict staging conditional.
+- Independent QA current candidate: không còn P0/P1/P2 regression trong phạm vi
+  M365/Graph + Tran; verdict approve cho staging sau UAT.
+- CI Linux current candidate:
+  [run 31880602675](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/actions/runs/31880602675)
+  pass toàn bộ frontend, Ruff, 328 tests, Docker và GreenNode Compose.
+- Các dòng lịch sử dưới đây mô tả release template/Draft Mail đang live, không
+  phải candidate M365 mới.
 - CI Linux của exact commit `9e17959`: 251 pass trong 29,23 giây, 85% coverage
   (6.476 statements, 967 missed); frontend, Ruff, production Docker build và
   GreenNode Compose validation cùng workflow đều xanh.
@@ -1310,7 +1320,7 @@ giới hạn/next step, không được quảng bá là đã production-ready:
 1. Operator đăng nhập staging và chạy synthetic end-to-end cloud PDF + Tran;
    deploy/health/auth/UI-load đã smoke thành công, nhưng automation không được
    lấy secret từ Render để tự ghi dữ liệu test.
-2. Feature PR #5 đã merge; review draft PR tài liệu #6 và merge khi owner chấp
+2. Feature PR #5 đã merge; review draft PR M365/Tran #6 và merge khi owner chấp
    thuận. Tạo/tag release nếu cần cho hackathon.
 3. UAT bằng approved operational accounting template/config trên môi trường
    private; Finance xác nhận 30-column output và GL mapping.
@@ -1321,10 +1331,10 @@ giới hạn/next step, không được quảng bá là đã production-ready:
    product hiện nhận mọi nonblank site và dùng collision checks. Không tự thêm
    filter trước khi owner xác nhận; nếu cần, triển khai configurable allowlist và
    regression thay vì hard-code rải rác.
-7. Root agent finalize release candidate M365/performance: full gates, exact SHA,
-   CI và docs snapshot; sau đó operator UAT bằng hai mailbox/folder test cùng
-   tenant, xác nhận Ngan chỉ `Mail.Read`, Tran `Mail.ReadWrite`, không
-   `Mail.Send`, sync không mutate mail và Reply-All draft thực sự chưa gửi.
+7. Operator UAT candidate `a69978f` bằng hai mailbox/folder test cùng tenant:
+   xác nhận Ngan chỉ `Mail.Read`, Tran `Mail.ReadWrite`, không `Mail.Send`, sync
+   không mutate mail và Reply-All draft thực sự chưa gửi. Chỉ redeploy Render sau
+   khi user chấp nhận mất dữ liệu staging một lần nữa.
 
 ### Chức năng trong specification nhưng chưa có end-to-end
 
