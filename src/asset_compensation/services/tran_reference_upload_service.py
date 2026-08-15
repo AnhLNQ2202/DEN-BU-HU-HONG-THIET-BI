@@ -323,8 +323,16 @@ class TranReferenceUploadService:
         ccdc: TranReferenceUpload | None = None,
         *,
         clear_ccdc: bool = False,
+        trusted_erp: bool = False,
     ) -> dict[str, Any]:
-        """Activate a required FA&GL and optional CCDC workbook atomically."""
+        """Activate a required FA&GL and optional CCDC workbook atomically.
+
+        ``trusted_erp`` is an explicit operator assertion used only by the
+        authenticated Tran reference UI. It skips the expensive whole-workbook
+        external-formula scan. Archive integrity, size/ratio/path checks,
+        active content rejection, relationship validation, exact workbook
+        schema validation, and bounded indexing remain mandatory.
+        """
 
         if ccdc is not None and clear_ccdc:
             raise TranReferenceUploadError(
@@ -339,7 +347,12 @@ class TranReferenceUploadService:
             _private_mode(staging, 0o700)
             final = self.versions_dir / version
             try:
-                fa_path = self._stage_upload(staging, "fa-gl", fa_gl)
+                fa_path = self._stage_upload(
+                    staging,
+                    "fa-gl",
+                    fa_gl,
+                    trusted_erp=trusted_erp,
+                )
                 try:
                     fa_gl_index = FaGlWorkbookIndex.from_path(fa_path)
                 except (OSError, TranReferenceError, ValueError) as exc:
@@ -350,7 +363,12 @@ class TranReferenceUploadService:
                 ccdc_path: Path | None = None
                 ccdc_index: CcdcWorkbookIndex | None = None
                 if ccdc is not None:
-                    ccdc_path = self._stage_upload(staging, "ccdc", ccdc)
+                    ccdc_path = self._stage_upload(
+                        staging,
+                        "ccdc",
+                        ccdc,
+                        trusted_erp=trusted_erp,
+                    )
                 elif not clear_ccdc and previous.ccdc_path is not None:
                     ccdc_path = staging / "ccdc.xlsx"
                     shutil.copyfile(previous.ccdc_path, ccdc_path)
@@ -626,6 +644,8 @@ class TranReferenceUploadService:
         staging: Path,
         role: str,
         upload: TranReferenceUpload,
+        *,
+        trusted_erp: bool = False,
     ) -> Path:
         basename = re.split(r"[/\\]", str(upload.filename or ""))[-1].strip()
         if not basename or Path(basename).suffix.casefold() != ".xlsx":
@@ -659,11 +679,16 @@ class TranReferenceUploadService:
         _private_mode(destination, 0o600)
         if size == 0:
             raise TranReferenceUploadError(f"{role} file is empty")
-        self._preflight_xlsx(destination, role)
+        self._preflight_xlsx(destination, role, trusted_erp=trusted_erp)
         return destination
 
     @staticmethod
-    def _preflight_xlsx(path: Path, role: str) -> None:
+    def _preflight_xlsx(
+        path: Path,
+        role: str,
+        *,
+        trusted_erp: bool = False,
+    ) -> None:
         if not zipfile.is_zipfile(path):
             raise TranReferenceUploadError(
                 f"{role} content does not match its .xlsx extension"
@@ -741,11 +766,12 @@ class TranReferenceUploadService:
                         external_link_rels_parts,
                         role,
                     )
-                TranReferenceUploadService._reject_external_workbook_expressions(
-                    archive,
-                    entries,
-                    role,
-                )
+                if not trusted_erp:
+                    TranReferenceUploadService._reject_external_workbook_expressions(
+                        archive,
+                        entries,
+                        role,
+                    )
         except zipfile.BadZipFile as exc:
             raise TranReferenceUploadError(
                 f"{role} file is not a valid XLSX workbook"

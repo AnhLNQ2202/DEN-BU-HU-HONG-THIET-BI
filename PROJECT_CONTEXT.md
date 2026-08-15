@@ -52,19 +52,20 @@ Snapshot hiện tại được cập nhật ngày **2026-08-16**:
 | Hạng mục | Giá trị tại snapshot |
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
-| Branch candidate hiện tại | `agent/tran-parser-mail-identity-fix` |
-| Base `origin/main` | `a30b8f292333ebfbc9c51e6690437e09da958c07` |
+| Branch candidate hiện tại | `agent/tran-reference-fast-upload` |
+| Base `origin/main` | `1ed076fd8854522a6396cfeed78b248a56588baf` |
 | Outlook companion | PR [#7](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/7) đã merge; Add-in/Bridge đã được smoke public assets trên staging |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Candidate local gate | 376 collected = 374 pass + 2 skip; coverage 81%; Ruff/diff-check + production Docker build pass |
-| Frontend candidate | 3 Node contract tests; Vite 51 modules; two builds byte-for-byte stable |
+| Candidate local gate | 378 collected = 376 pass + 2 skip; 82% coverage; Ruff/diff-check + production Docker build/container smoke pass |
+| Frontend candidate | 4 Node contract tests; Vite 51 modules; tracked dist regenerated |
 | Candidate deploy status | Kiểm tra GitHub/Render theo exact commit hiện tại; M365 env vẫn chủ động để trống |
 | Release verdict | Local staging gate xanh; phải chờ GitHub CI Docker rồi mới Manual Deploy; chưa phải production multi-user |
 
-Candidate hiện tại thêm các bảng LOST ban đầu được allowlist, popup Outlook ở header, một
-picker cho cặp Supplier và disclosure cho danh sách upload dài. User đã cho phép
+Candidate hiện tại kế thừa parser/mail-identity/UI merged, sửa ERP Tag Number có
+một dấu chấm cuối, chuyển FA&GL index sang Calamine streaming, thêm trusted-ERP
+fast scan và UI hai giai đoạn upload/server scan. User đã cho phép
 redeploy disposable staging và chấp nhận mất dữ liệu `/tmp`; quyền này chỉ áp
 dụng staging service nêu trên, không mở rộng sang production hay thay env/plan.
 
@@ -656,7 +657,18 @@ workspace để certification production; cần UAT với file tổ chức đã 
   ActiveX/embedding, external formula/defined name, HTTP/external relationship,
   unsafe ZIP/zip bomb và validate index trước atomic switch. Ngoại lệ duy nhất là
   metadata `externalBook` trỏ `file:` đã được chứng minh mồ côi: đúng schema,
-  không cache data/công thức/name, và adapter luôn đọc với `keep_links=False`.
+  không cache data/công thức/name; CCDC đọc `keep_links=False`, còn FA&GL
+  streaming reader không fetch external workbook.
+- UI vận hành gửi exact `trusted_erp=true` cho báo cáo FA&GL/CCDC do
+  operator xuất từ ERP nội bộ. Chế độ này chỉ bỏ lượt quét text công
+  thức ngoài workbook vốn tốn CPU; vẫn giữ kiểm tra ZIP/type/size/path/
+  compression, chặn VBA/OLE/ActiveX/embedding/relationship nguy hiểm, validate
+  schema và index đầy đủ trước atomic switch. Client bỏ field này vẫn dùng
+  full scan. Không áp dụng trust này cho EML/Outlook/PDF/download.
+- FA&GL dùng Calamine streaming thay openpyxl cho lập index, nhưng giữ nguyên
+  bốn sheet/header/cột và giá trị. Lookup exact luôn chạy trước; chỉ khi
+  không có exact row mới thử thêm một dấu chấm cuối do ERP xuất. Nhiều
+  fallback rows vẫn `AMBIGUOUS`, không tự chọn.
 - Omit CCDC để giữ current; gửi exact `clear_ccdc=true` để bỏ managed CCDC ở
   version mới.
 - External env references là read-only; managed upload được ưu tiên.
@@ -754,7 +766,7 @@ capability không có trả 503 với `capability_available:false`.
 | POST | `/api/m365/<role>/folder` | Select exactly one returned folder; reset role cursor |
 | POST | `/api/m365/<role>/sync` | One-page/10-message created delta/MIME ingest; count-only skip fields; header `m365-sync-v1` |
 | GET | `/api/tran/references/status` | FA&GL/CCDC availability/source type |
-| POST | `/api/tran/references/upload` | FA&GL + optional CCDC; header `tran-reference-v1` |
+| POST | `/api/tran/references/upload` | FA&GL + optional CCDC; header `tran-reference-v1`; UI gửi `trusted_erp=true` cho fast scan nội bộ |
 | POST | `/api/tran/resolve` | Resolve/calculation 1–100 assets, read-only result |
 | POST | `/api/tran/workbooks` | Export new Tran workbook; returns opaque output ID |
 | GET | `/api/tran/workbooks/<output_id>/download` | Private/no-store workbook download |
@@ -1517,6 +1529,22 @@ trong tài liệu là HEAD bất biến.
   `os.replace` của Supplier staging và Tran reference pointer; mỗi exact test pass
   ngay trên temp mới và fresh full suite pass dưới short `C:\\t` basetemp như số
   liệu trên. Không che các lần flake môi trường này thành first-run pass.
+
+**Tran reference fast-upload candidate evidence (local, 16/08/2026):**
+
+- FA&GL reader mới và reader cũ được đối chiếu read-only trên báo cáo ERP
+  thật: cùng 78.214 records, 78.211 raw keys và không khác giá trị indexed;
+- lập index giảm từ khoảng 9,56 giây xuống 2,01 giây local. Full
+  trusted-ERP upload và atomic activation của file thật mất 2,19 giây local;
+  con số này là diagnostic, không phải SLA Render Free;
+- tag synthetic có terminal period, exact-vs-fallback priority và ambiguous fallback
+  đều có regression; lookup read-only trên ca vận hành đã báo `MATCHED` duy nhất
+  mà không ghi identity/dòng workbook vào Git;
+- full pytest 378 collected = 376 passed + 2 expected platform skips, tổng
+  coverage 82%; Ruff và diff-check pass; frontend 4 Node tests + Vite 51
+  modules pass;
+- production Docker Linux build cài `python-calamine` 0.7.0 thành công; container
+  smoke pass health 200, root không Basic 401 và public Add-in taskpane 200.
 
 ### 15.4 Khoảng trống automation hiện tại
 

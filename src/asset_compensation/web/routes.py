@@ -1317,7 +1317,7 @@ def upload_tran_references() -> Any:
         raise ValidationError("Tran reference upload must use multipart/form-data")
     if not set(request.files).issubset({"fa_gl_file", "ccdc_file"}):
         raise ValidationError("Upload only fa_gl_file and optional ccdc_file")
-    if set(request.form) - {"clear_ccdc"}:
+    if set(request.form) - {"clear_ccdc", "trusted_erp"}:
         raise ValidationError("Unsupported Tran reference upload fields")
     fa_files = request.files.getlist("fa_gl_file")
     ccdc_files = request.files.getlist("ccdc_file")
@@ -1327,6 +1327,10 @@ def upload_tran_references() -> Any:
     if raw_clear not in {None, "true"}:
         raise ValidationError("clear_ccdc must be omitted or exactly true")
     clear_ccdc = raw_clear == "true"
+    raw_trusted_erp = request.form.get("trusted_erp")
+    if raw_trusted_erp not in {None, "true"}:
+        raise ValidationError("trusted_erp must be omitted or exactly true")
+    trusted_erp = raw_trusted_erp == "true"
     if ccdc_files and clear_ccdc:
         raise ValidationError("ccdc_file and clear_ccdc cannot be supplied together")
 
@@ -1348,6 +1352,7 @@ def upload_tran_references() -> Any:
             else None
         ),
         clear_ccdc=clear_ccdc,
+        trusted_erp=trusted_erp,
     )
     settings, _, _ = _dependencies()
     return jsonify(
@@ -1355,6 +1360,7 @@ def upload_tran_references() -> Any:
             "ok": True,
             "message": "TranNNB references uploaded and activated",
             "managed": status,
+            "processing_mode": "trusted-erp-fast" if trusted_erp else "full",
             "status": _tran_reference_status(settings),
         }
     ), 201

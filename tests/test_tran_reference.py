@@ -113,6 +113,40 @@ def test_fa_gl_uses_exact_sheet_offsets_and_reports_ambiguous_matches(tmp_path: 
     assert missing.status is ReferenceStatus.NOT_FOUND
 
 
+def test_fa_gl_falls_back_to_one_erp_trailing_period_after_exact_lookup(
+    tmp_path: Path,
+) -> None:
+    path = make_fa_gl(
+        tmp_path / "erp-period-fa-gl.xlsx",
+        {
+            "VNG-Tool": [
+                {"tag": "DEMO60281.", "asset_number": 306610},
+                {"tag": "DUP60282.", "asset_number": "T-001"},
+                {"tag": "EXACT60283.", "asset_number": "T-003"},
+            ],
+            "VNGS-Tool": [
+                {"tag": "DUP60282.", "asset_number": "T-002"},
+                {"tag": "EXACT60283", "asset_number": "T-004"},
+            ],
+        },
+    )
+
+    index = FaGlWorkbookIndex.from_path(path)
+    normalized = index.lookup("DEMO60281")
+    duplicate = index.lookup("DUP60282")
+    exact = index.lookup("EXACT60283")
+
+    assert normalized.status is ReferenceStatus.MATCHED
+    assert normalized.record is not None
+    assert normalized.record.tag_number == "DEMO60281."
+    assert normalized.record.asset_number == "306610"
+    assert duplicate.status is ReferenceStatus.AMBIGUOUS
+    assert len(duplicate.matches) == 2
+    assert exact.status is ReferenceStatus.MATCHED
+    assert exact.record is not None
+    assert exact.record.asset_number == "T-004"
+
+
 def test_fa_gl_rejects_missing_required_sheets(tmp_path: Path) -> None:
     workbook = Workbook()
     path = tmp_path / "bad-fa-gl.xlsx"

@@ -40,9 +40,16 @@ validated as part of the source schema but is never used for the compensation sc
 
 Managed uploads tolerate only inert legacy `externalBook` metadata that points
 to local `file:` URIs and has no cached rows, external formulas, or external
-defined names. The indexes open uploaded references with `keep_links=False`.
-Remote links, DDE/OLE, active content, embeddings, and links used by workbook
-expressions remain hard failures; the product never follows an external link.
+defined names. CCDC opens with `keep_links=False`; the streaming FA&GL reader
+also never fetches external workbooks. Remote relationships, DDE/OLE, active
+content, and embeddings remain hard failures. The authenticated Product UI's
+explicit internal-ERP fast mode skips only the full workbook-expression text
+scan as documented in [TRAN_API.md](TRAN_API.md); API clients default to the
+full scan.
+
+FA&GL lookup remains exact first. If and only if no exact row exists, it may
+retry one terminal period produced by ERP exports. Multiple fallback rows are
+still `AMBIGUOUS` and never selected automatically.
 
 `CcdcWorkbookIndex` supports:
 

@@ -11,6 +11,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
+from python_calamine import CalamineError, CalamineWorkbook
 
 from asset_compensation.domain import DepreciationGroup, ReferenceStatus, ValidationError
 
@@ -32,6 +34,7 @@ _FA_HEADERS = {
     27: "cost",
 }
 _NONPHYSICAL_GROUP_TYPES = {"service", "software", "virtual asset"}
+_ERP_TAG_RE = re.compile(r"[A-Z][A-Z0-9-]*\d[A-Z0-9-]*")
 
 # Operational snapshots are currently well below these ceilings. The limits
 # deliberately leave substantial headroom while preventing a sparse Excel sheet
@@ -71,11 +74,36 @@ def _reference_text(value: object, field: str, *, limit: int) -> str:
 
 
 def _reference_tag(value: object, field: str) -> str:
-    return re.sub(
-        r"\s+",
-        "",
-        _reference_text(value, field, limit=MAX_REFERENCE_TAG_CHARS),
-    ).upper()
+    return _tag(_reference_text(value, field, limit=MAX_REFERENCE_TAG_CHARS))
+
+
+def _calamine_value(value: object) -> object:
+    """Match openpyxl's integral-number representation without mutating text."""
+
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _calamine_row_value(
+    values: list[object],
+    column: int,
+    first_column: int,
+) -> object:
+    index = column - first_column
+    return _calamine_value(values[index]) if 0 <= index < len(values) else None
+
+
+def _calamine_sheet_row_count(sheet: object, label: str) -> int:
+    end = getattr(sheet, "end", None)
+    raw = end[0] + 1 if isinstance(end, tuple) and len(end) == 2 else 0
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise TranReferenceError(f"{label} has an invalid row extent")
+    if raw > MAX_REFERENCE_ROWS_PER_SHEET:
+        raise TranReferenceError(
+            f"{label} exceeds the {MAX_REFERENCE_ROWS_PER_SHEET:,}-row safety limit"
+        )
+    return raw
 
 
 def _sheet_row_count(sheet: object, label: str) -> int:
@@ -175,108 +203,128 @@ class FaGlWorkbookIndex:
         source_path = Path(path).resolve()
         if not source_path.is_file() or source_path.suffix.lower() not in {".xlsx", ".xlsm"}:
             raise TranReferenceError("FA&GL source must be an existing .xlsx or .xlsm file")
-        workbook = load_workbook(
-            source_path,
-            read_only=True,
-            data_only=True,
-            keep_links=False,
-        )
-        indexed: dict[str, list[FaGlRecord]] = defaultdict(list)
         try:
-            missing = [sheet for sheet in _FA_SHEETS if sheet not in workbook.sheetnames]
-            if missing:
-                raise TranReferenceError(
-                    "FA&GL workbook is missing required sheets: " + ", ".join(missing)
-                )
-            scanned_rows = sum(
-                max(
-                    0,
-                    _sheet_row_count(workbook[sheet_name], sheet_name) - data_row + 1,
-                )
-                for sheet_name, (_, data_row, _, _) in _FA_SHEETS.items()
+            workbook = CalamineWorkbook.from_path(source_path)
+        except CalamineError as exc:
+            raise TranReferenceError("FA&GL source is not a readable workbook") from exc
+        indexed: dict[str, list[FaGlRecord]] = defaultdict(list)
+        missing = [sheet for sheet in _FA_SHEETS if sheet not in workbook.sheet_names]
+        if missing:
+            raise TranReferenceError(
+                "FA&GL workbook is missing required sheets: " + ", ".join(missing)
             )
-            if scanned_rows > MAX_FA_SCANNED_ROWS:
-                raise TranReferenceError(
-                    "FA&GL workbook exceeds the combined row safety limit"
+        sheets = {
+            sheet_name: workbook.get_sheet_by_name(sheet_name)
+            for sheet_name in _FA_SHEETS
+        }
+        scanned_rows = sum(
+            max(
+                0,
+                _calamine_sheet_row_count(sheets[sheet_name], sheet_name)
+                - data_row
+                + 1,
+            )
+            for sheet_name, (_, data_row, _, _) in _FA_SHEETS.items()
+        )
+        if scanned_rows > MAX_FA_SCANNED_ROWS:
+            raise TranReferenceError(
+                "FA&GL workbook exceeds the combined row safety limit"
+            )
+        record_count = 0
+        for sheet_name, (header_row, data_row, book, entity) in _FA_SHEETS.items():
+            sheet = sheets[sheet_name]
+            start = getattr(sheet, "start", None)
+            first_column = (
+                start[1] + 1
+                if isinstance(start, tuple) and len(start) == 2
+                else 1
+            )
+            header_checked = False
+            for row_number, raw_values in enumerate(sheet.iter_rows(), start=1):
+                values = list(raw_values)
+                if row_number == header_row:
+                    for column, expected in _FA_HEADERS.items():
+                        actual = _normalized_text(
+                            _calamine_row_value(values, column, first_column)
+                        )
+                        if actual != _normalized_text(expected):
+                            raise TranReferenceError(
+                                f"{sheet_name}!{get_column_letter(column)}{header_row} must be "
+                                f"{expected!r}"
+                            )
+                    header_checked = True
+                if row_number < data_row:
+                    continue
+                tag_number = _reference_tag(
+                    _calamine_row_value(values, 16, first_column),
+                    f"{sheet_name}!P{row_number}",
                 )
-            record_count = 0
-            for sheet_name, (header_row, data_row, book, entity) in _FA_SHEETS.items():
-                sheet = workbook[sheet_name]
-                for column, expected in _FA_HEADERS.items():
-                    actual = _normalized_text(sheet.cell(header_row, column).value)
-                    if actual != _normalized_text(expected):
-                        raise TranReferenceError(
-                            f"{sheet_name}!{sheet.cell(header_row, column).coordinate} must be "
-                            f"{expected!r}"
-                        )
-                for row_number, values in enumerate(
-                    sheet.iter_rows(
-                        min_row=data_row,
-                        max_row=sheet.max_row,
-                        min_col=1,
-                        max_col=27,
-                        values_only=True,
-                    ),
-                    start=data_row,
-                ):
-                    tag_number = _reference_tag(
-                        values[15], f"{sheet_name}!P{row_number}"
+                if not tag_number:
+                    continue
+                record_count += 1
+                if record_count > MAX_FA_RECORDS:
+                    raise TranReferenceError(
+                        "FA&GL workbook exceeds the indexed-record safety limit"
                     )
-                    if not tag_number:
-                        continue
-                    record_count += 1
-                    if record_count > MAX_FA_RECORDS:
-                        raise TranReferenceError(
-                            "FA&GL workbook exceeds the indexed-record safety limit"
+                indexed[tag_number].append(
+                    FaGlRecord(
+                        tag_number=tag_number,
+                        asset_number=_reference_text(
+                            _calamine_row_value(values, 12, first_column),
+                            f"{sheet_name}!L{row_number}",
+                            limit=MAX_REFERENCE_TEXT_CHARS,
                         )
-                    indexed[tag_number].append(
-                        FaGlRecord(
-                            tag_number=tag_number,
-                            asset_number=_reference_text(
-                                values[11],
-                                f"{sheet_name}!L{row_number}",
-                                limit=MAX_REFERENCE_TEXT_CHARS,
-                            )
-                            or None,
-                            start_date=_date_value(values[21]),
-                            cost=_whole_vnd(values[26]),
-                            book=book,
-                            entity=entity,
-                            cost_center=_reference_text(
-                                values[6],
-                                f"{sheet_name}!G{row_number}",
-                                limit=MAX_REFERENCE_TEXT_CHARS,
-                            )
-                            or None,
-                            product_code=_reference_text(
-                                values[7],
-                                f"{sheet_name}!H{row_number}",
-                                limit=MAX_REFERENCE_TEXT_CHARS,
-                            )
-                            or None,
-                            location=_reference_text(
-                                values[9],
-                                f"{sheet_name}!J{row_number}",
-                                limit=MAX_REFERENCE_TEXT_CHARS,
-                            )
-                            or None,
-                            company_name=_reference_text(
-                                values[1],
-                                f"{sheet_name}!B{row_number}",
-                                limit=MAX_REFERENCE_TEXT_CHARS,
-                            )
-                            or None,
-                            source_file=source_path.name,
-                            source_sheet=sheet_name,
-                            source_row=row_number,
+                        or None,
+                        start_date=_date_value(
+                            _calamine_row_value(values, 22, first_column)
+                        ),
+                        cost=_whole_vnd(
+                            _calamine_row_value(values, 27, first_column)
+                        ),
+                        book=book,
+                        entity=entity,
+                        cost_center=_reference_text(
+                            _calamine_row_value(values, 7, first_column),
+                            f"{sheet_name}!G{row_number}",
+                            limit=MAX_REFERENCE_TEXT_CHARS,
                         )
+                        or None,
+                        product_code=_reference_text(
+                            _calamine_row_value(values, 8, first_column),
+                            f"{sheet_name}!H{row_number}",
+                            limit=MAX_REFERENCE_TEXT_CHARS,
+                        )
+                        or None,
+                        location=_reference_text(
+                            _calamine_row_value(values, 10, first_column),
+                            f"{sheet_name}!J{row_number}",
+                            limit=MAX_REFERENCE_TEXT_CHARS,
+                        )
+                        or None,
+                        company_name=_reference_text(
+                            _calamine_row_value(values, 2, first_column),
+                            f"{sheet_name}!B{row_number}",
+                            limit=MAX_REFERENCE_TEXT_CHARS,
+                        )
+                        or None,
+                        source_file=source_path.name,
+                        source_sheet=sheet_name,
+                        source_row=row_number,
                     )
-        finally:
-            workbook.close()
+                )
+            if not header_checked:
+                raise TranReferenceError(
+                    f"{sheet_name} is missing its required header row {header_row}"
+                )
         return cls({key: tuple(value) for key, value in indexed.items()}, source_path)
 
     def lookup(self, tag_number: object) -> FaGlLookup:
-        matches = self._records.get(_tag(tag_number), ())
+        normalized_tag = _tag(tag_number)
+        matches = self._records.get(normalized_tag, ())
+        # Preserve the original exact-match rule. Only when no exact row exists,
+        # try the single terminal period emitted by some ERP exports.
+        if not matches and _ERP_TAG_RE.fullmatch(normalized_tag):
+            matches = self._records.get(f"{normalized_tag}.", ())
         if not matches:
             status = ReferenceStatus.NOT_FOUND
         elif len(matches) == 1:
