@@ -153,7 +153,9 @@ vào hai folder đó. Nó không chui vào folder khác.
    trong cửa sổ 30 ngày. Nếu còn mail, bấm tiếp; nó đi lần lượt từ cũ tới mới và
    không bỏ qua phần còn lại.
 8. Bridge tạo một EML nhỏ từ tiêu đề, người gửi/nhận, ngày,
-   `Message-ID` và phần chữ/HTML. Nó không chép attachment.
+   `Message-ID` và phần chữ/HTML. Tên EML hiển thị trên Product lấy từ Subject
+   đã làm sạch; chỉ khi Subject trống mới dùng tên giờ-phút kỹ thuật. Bridge
+   không chép attachment.
 9. Product phân tích EML và tạo case như bình thường.
 10. NganTLT tiếp tục review/hạch toán trên Product. Ngan không có gói Reply-All.
 11. TranNNB resolve dữ liệu và bấm **Đưa draft sang Add-in / Bridge**.

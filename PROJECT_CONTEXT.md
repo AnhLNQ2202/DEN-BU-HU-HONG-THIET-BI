@@ -52,21 +52,21 @@ Snapshot hiện tại được cập nhật ngày **2026-08-16**:
 | Hạng mục | Giá trị tại snapshot |
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
-| Branch candidate hiện tại | `agent/dpi-toast-personal-outlook` |
-| Base `origin/main` | `e01eca741420a24e03acc4b58cb20f73e07d6c5a` |
+| Branch candidate hiện tại | `agent/tran-workspace-compact` |
+| Base `origin/main` | `84bbb2af8724d1262f5482facb3d268d038b571a` |
 | Outlook companion | PR [#7](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/7) đã merge; Add-in/Bridge đã được smoke public assets trên staging |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Candidate local gate | 389 collected = 387 pass + 2 expected platform skips; Ruff/diff-check + production Docker build/container smoke pass |
-| Frontend candidate | 6 Node contract tests; Vite 51 modules; tracked dist regenerated |
+| Candidate local gate | 391 collected = 389 pass + 2 expected platform skips; Ruff/diff-check + production Docker build/container smoke pass |
+| Frontend candidate | 8 Node contract tests; Vite 51 modules; tracked dist regenerated |
 | Candidate deploy status | Chưa push/deploy tại thời điểm snapshot; M365 env vẫn chủ động để trống |
 | Release verdict | Local staging gate xanh; phải chờ GitHub CI Docker rồi mới Manual Deploy; chưa phải production multi-user |
 
-Candidate hiện tại kế thừa parser/mail-identity/UI và fast-upload đã merge; thêm
-Windows DPI awareness cho Local Bridge, chọn tối đa 20 draft cùng lúc, toast
-toàn cục ở góc phải dưới, và giữ Microsoft 365 cá nhân ở trạng thái fail-closed
-cho đến khi có App Registration hợp lệ. User đã cho phép
+Candidate hiện tại kế thừa parser/mail-identity/UI, fast-upload, DPI/toast và
+multi-draft đã merge; thêm Tran workspace ba bước gọn, result card thu gọn và
+tên mail Local Bridge theo Subject cho các mail được lấy mới. Microsoft 365 cá
+nhân vẫn fail-closed cho đến khi có App Registration hợp lệ. User đã cho phép
 redeploy disposable staging và chấp nhận mất dữ liệu `/tmp`; quyền này chỉ áp
 dụng staging service nêu trên, không mở rộng sang production hay thay env/plan.
 
@@ -1507,6 +1507,10 @@ trong tài liệu là HEAD bất biến.
 - Add-in đặt safe source filename theo Subject, ghi Custom Property `Đã xử lý`
   lên exact Outlook item sau upload và vẫn dựa vào Message-ID + content hash
   phía server làm chốt chống hồ sơ trùng;
+- Local Bridge cũng đặt safe source filename theo Subject cho mail mới; Subject
+  trống mới dùng tên kỹ thuật theo role/thời gian. Tran workspace dùng ba bước
+  `Thông tin → Kết quả → Xuất & Draft`, tự chuyển sang kết quả sau resolve và
+  thu gọn từng tài sản đủ bằng chứng để tránh phải kéo qua toàn bộ chi tiết;
 - Outlook controls đã chuyển khỏi hai workspace vào modal chung cạnh language;
   Supplier UI dùng một picker đúng hai file và filename-based role detection;
   danh sách file/case/warning dài đóng mặc định;
