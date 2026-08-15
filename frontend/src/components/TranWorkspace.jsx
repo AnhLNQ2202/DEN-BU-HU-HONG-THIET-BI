@@ -3,12 +3,21 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { dashboardApi } from "../api.js";
 import { translate } from "../i18n.js";
 import { formatCurrency } from "../utils.js";
-import { resolveLostDate } from "../workflowContracts.js";
+import {
+  buildTranSourceBatches,
+  isAmbiguousDraftError,
+  resolveLostDate,
+  runTranBatch,
+  selectTranGroupEntries,
+  tranDraftRequestFingerprint,
+} from "../workflowContracts.js";
 import { useToast } from "./Feedback.jsx";
+import { TranCasePickerDialog } from "./TranCasePickerDialog.jsx";
 import { EmailUploadPanel } from "./UploadWorkspace.jsx";
 
 const MAX_REFERENCE_BYTES = 50 * 1024 * 1024;
 const MAX_TRAN_ASSETS = 100;
+const MAX_TRAN_DRAFT_SOURCES = 20;
 const EMPTY_REFERENCE_STATUS = Object.freeze({
   fa_gl: { configured: false, available: false, source: null },
   ccdc: { configured: false, available: false, source: null },
@@ -148,6 +157,11 @@ export function expandTranCaseRows(caseItem) {
 
 function expandTranGroup(group) {
   return group?.cases?.flatMap(expandTranCaseRows) || [];
+}
+
+function tranBindingKey(binding) {
+  if (!binding?.case_id) return "";
+  return `${binding.case_id}:${binding.source_row_index ?? "case"}`;
 }
 
 export function buildTranAssetPayload(form, language = "vi") {
@@ -302,6 +316,90 @@ export function TranResolutionCard({ item, index, language }) {
   );
 }
 
+function tranSourceLabel(batch, language) {
+  const firstCase = batch?.cases?.[0];
+  return firstCase?.source_eml?.filename
+    || firstCase?.source_file
+    || firstCase?.asset_code
+    || translate(language, "tranDraftUnknownSource");
+}
+
+function TranDraftBatchResult({ busy, language, mode, onRetry, onRetryUncertain, outcome }) {
+  if (!outcome) return null;
+  const remaining = outcome.remaining || [];
+  const uncertainFailures = outcome.failures.filter(({ error }) => isAmbiguousDraftError(error));
+  const retryableFailures = outcome.failures.filter(({ error }) => !isAmbiguousDraftError(error));
+  const retryableCount = retryableFailures.length + remaining.length;
+  const incompleteCount = outcome.failures.length + remaining.length;
+  const titleKey = {
+    companion: "tranCompanionDraftReady",
+    eml: "tranDraftReady",
+    outlook: "tranOutlookDraftReady",
+  }[mode];
+  return (
+    <div className="upload-result tran-batch-result">
+      <strong>{translate(language, titleKey)}</strong>
+      <p>
+        {translate(language, "tranDraftBatchSummary")
+          .replace("{success}", String(outcome.successes.length))
+          .replace("{failed}", String(incompleteCount))
+          .replace("{total}", String(outcome.total))}
+      </p>
+      <div className="tran-batch-result__list">
+        {outcome.successes.map(({ batch, result }) => (
+          <article className="tran-batch-result__item is-success" key={batch.key}>
+            <div>
+              <strong>{tranSourceLabel(batch, language)}</strong>
+              <span>{translate(language, "tranDraftBatchSuccess")}</span>
+            </div>
+            <div className="tran-batch-result__links">
+              {result.workbook_download_url && <a href={result.workbook_download_url} download>↓ Excel</a>}
+              {mode === "eml" && result.draft_download_url && <a href={result.draft_download_url} download>↓ EML</a>}
+              {mode === "outlook" && result.outlook_draft?.web_url && (
+                <a href={result.outlook_draft.web_url} target="_blank" rel="noreferrer">
+                  {translate(language, "tranOpenOutlookDraft")}
+                </a>
+              )}
+              {mode === "companion" && <span>{translate(language, "tranCompanionDraftQueuedShort")}</span>}
+            </div>
+          </article>
+        ))}
+        {outcome.failures.map(({ batch, error }) => (
+          <article className={`tran-batch-result__item ${isAmbiguousDraftError(error) ? "is-pending" : "is-failed"}`} key={batch.key}>
+            <div>
+              <strong>{tranSourceLabel(batch, language)}</strong>
+              <span>
+                {isAmbiguousDraftError(error)
+                  ? translate(language, "tranDraftBatchUncertain")
+                  : error?.message || translate(language, "tranDraftBatchFailed")}
+              </span>
+            </div>
+          </article>
+        ))}
+        {remaining.map((batch) => (
+          <article className="tran-batch-result__item is-pending" key={batch.key}>
+            <div>
+              <strong>{tranSourceLabel(batch, language)}</strong>
+              <span>{translate(language, "tranDraftBatchNotRun")}</span>
+            </div>
+          </article>
+        ))}
+      </div>
+      {outcome.stopped && <div className="dialog-note is-warning"><p>{translate(language, "tranDraftBatchStopped")}</p></div>}
+      {retryableCount > 0 && (
+        <button className="btn secondary" type="button" disabled={busy} onClick={onRetry}>
+          {translate(language, "tranDraftBatchRetry")}
+        </button>
+      )}
+      {uncertainFailures.length > 0 && (
+        <button className="btn secondary" type="button" disabled={busy} onClick={onRetryUncertain}>
+          {translate(language, "tranDraftBatchRetryUncertain")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function TranWorkspace({
   capabilities,
   cases,
@@ -314,7 +412,8 @@ export function TranWorkspace({
   testDataClearVersion,
 }) {
   const [forms, setForms] = useState([{ ...EMPTY_FORM }]);
-  const [selectedGroupKey, setSelectedGroupKey] = useState("");
+  const [selectedGroupKeys, setSelectedGroupKeys] = useState([]);
+  const [casePickerOpen, setCasePickerOpen] = useState(false);
   const [sourceBindings, setSourceBindings] = useState([]);
   const [pendingUploadedCaseId, setPendingUploadedCaseId] = useState("");
   const [emailNotice, setEmailNotice] = useState("");
@@ -340,10 +439,17 @@ export function TranWorkspace({
   const [yearSheet, setYearSheet] = useState("");
   const [bodyIntro, setBodyIntro] = useState("");
   const [workspaceStep, setWorkspaceStep] = useState("input");
+  const [draftBatchProgress, setDraftBatchProgress] = useState(null);
   const faInputRef = useRef(null);
   const ccdcInputRef = useRef(null);
   const referenceControllerRef = useRef(null);
   const actionControllerRef = useRef(null);
+  const actionGenerationRef = useRef(0);
+  const successfulDraftFingerprintsRef = useRef({
+    companion: new Map(),
+    eml: new Map(),
+    outlook: new Map(),
+  });
   const lostCases = useMemo(
     () => cases.filter((item) => (
       item.case_type === "LOST"
@@ -352,14 +458,58 @@ export function TranWorkspace({
     [cases],
   );
   const caseGroups = useMemo(() => groupTranCasesBySource(lostCases), [lostCases]);
-  const selectedCases = useMemo(
-    () => sourceBindings
-      .map((binding) => lostCases.find((item) => item.id === binding.case_id))
-      .filter(Boolean),
-    [lostCases, sourceBindings],
+  const casePickerGroups = useMemo(
+    () => caseGroups.map((group) => {
+      const firstCase = group.cases[0];
+      const expanded = expandTranGroup(group);
+      const assetCount = expanded.length;
+      const label = group.handle
+        ? firstCase?.source_eml?.filename || firstCase?.source_file || firstCase?.asset_code
+        : firstCase?.asset_code || firstCase?.id;
+      const tags = expanded.map((item) => item.form?.tag_number).filter(Boolean);
+      const domains = expanded.map((item) => item.form?.domain).filter(Boolean);
+      const assetNames = expanded.map((item) => item.form?.asset_name).filter(Boolean);
+      return {
+        key: group.key,
+        label: label || translate(language, "tranDraftUnknownSource"),
+        meta: [...new Set([...tags, ...domains])].join(" · ") || translate(language, "tranBatchNoMetadata"),
+        searchText: [label, ...tags, ...assetNames, ...domains].filter(Boolean).join(" "),
+        assetCount,
+        caseCount: group.cases.length,
+      };
+    }),
+    [caseGroups, language],
   );
-  const selectedHandles = new Set(selectedCases.map((item) => item.source_eml?.handle).filter(Boolean));
-  const sourceHandle = sharedTranSourceHandle(selectedCases);
+  const selection = useMemo(
+    () => selectTranGroupEntries(caseGroups, selectedGroupKeys, expandTranGroup, MAX_TRAN_ASSETS),
+    [caseGroups, selectedGroupKeys],
+  );
+  const selectedCaseCount = useMemo(
+    () => new Set(selection.groups.flatMap((group) => group.cases.map((item) => item.id))).size,
+    [selection.groups],
+  );
+  const sourceBatchState = useMemo(
+    () => {
+      try {
+        return {
+          batches: buildTranSourceBatches(caseGroups, selectedGroupKeys, forms, sourceBindings),
+          error: "",
+        };
+      } catch (error) {
+        return { batches: [], error: error.message };
+      }
+    },
+    [caseGroups, forms, selectedGroupKeys, sourceBindings],
+  );
+  const sourceBatches = sourceBatchState.batches;
+  const draftSourcesReady = selectedGroupKeys.length > 0
+    && !sourceBatchState.error
+    && sourceBatches.length === selectedGroupKeys.length
+    && sourceBatches.every((batch) => batch.handle && batch.forms.length === batch.bindings.length);
+  const draftSourceLimitReady = sourceBatches.length <= MAX_TRAN_DRAFT_SOURCES;
+  const pendingEmlDraftCount = draftBatchesNeedingCreation("eml").length;
+  const pendingOutlookDraftCount = draftBatchesNeedingCreation("outlook").length;
+  const pendingCompanionDraftCount = draftBatchesNeedingCreation("companion").length;
   const resolvedItems = resolution?.results || [];
   const canResolve = capabilities?.tran_lookup === true || referenceStatus.fa_gl.available;
   const canExport = capabilities?.tran_workbook_export === true;
@@ -370,8 +520,15 @@ export function TranWorkspace({
   useEffect(() => {
     referenceControllerRef.current?.abort();
     actionControllerRef.current?.abort();
+    actionGenerationRef.current += 1;
+    successfulDraftFingerprintsRef.current = {
+      companion: new Map(),
+      eml: new Map(),
+      outlook: new Map(),
+    };
     setForms([{ ...EMPTY_FORM }]);
-    setSelectedGroupKey("");
+    setSelectedGroupKeys([]);
+    setCasePickerOpen(false);
     setSourceBindings([]);
     setPendingUploadedCaseId("");
     setEmailNotice("");
@@ -395,6 +552,7 @@ export function TranWorkspace({
     setYearSheet("");
     setBodyIntro("");
     setWorkspaceStep("input");
+    setDraftBatchProgress(null);
     if (faInputRef.current) faInputRef.current.value = "";
     if (ccdcInputRef.current) ccdcInputRef.current.value = "";
 
@@ -445,33 +603,40 @@ export function TranWorkspace({
       setEmailNotice(translate(language, "tranTooManyAssets"));
       return;
     }
-    setSelectedGroupKey(group.key);
-    setSourceBindings(expanded.map((item) => item.binding));
-    setForms(expanded.map((item) => item.form));
-    setWorkspaceStep("input");
-    setResolution(null);
-    setWorkbookResult(null);
-    setDraftResult(null);
-    setOutlookDraftResult(null);
-    setCompanionDraftResult(null);
+    const applied = applyCaseSelection([...selectedGroupKeys, group.key], { announceChange: false });
+    if (!applied) {
+      setPendingUploadedCaseId("");
+      setEmailNotice(translate(language, "tranTooManyAssets"));
+      return;
+    }
     setPendingUploadedCaseId("");
     setEmailNotice(translate(language, "tranEmailPrefillReady"));
-  }, [caseGroups, cases, language, lostCases, pendingUploadedCaseId]);
+  }, [caseGroups, cases, language, lostCases, pendingUploadedCaseId, selectedGroupKeys]);
 
   useEffect(() => {
-    if (!selectedGroupKey || caseGroups.some((item) => item.key === selectedGroupKey)) return;
-    setSelectedGroupKey("");
-    setSourceBindings([]);
-    setForms([{ ...EMPTY_FORM }]);
-    setWorkspaceStep("input");
-    setResolution(null);
-    setWorkbookResult(null);
-    setDraftResult(null);
-    setOutlookDraftResult(null);
-    setCompanionDraftResult(null);
-  }, [caseGroups, selectedGroupKey]);
+    const validKeys = selectedGroupKeys.filter((key) => caseGroups.some((item) => item.key === key));
+    if (validKeys.length === selectedGroupKeys.length) return;
+    applyCaseSelection(validKeys, { announceChange: false });
+  }, [caseGroups, selectedGroupKeys]);
+
+  function draftFingerprint(mode, batch) {
+    return tranDraftRequestFingerprint(mode, batch, {
+      bodyIntro,
+      processingDate,
+      yearSheet,
+    });
+  }
+
+  function draftBatchesNeedingCreation(mode) {
+    const fingerprints = successfulDraftFingerprintsRef.current[mode];
+    return sourceBatches.filter((batch) => fingerprints.get(batch.key) !== draftFingerprint(mode, batch));
+  }
 
   function invalidateOutputs() {
+    actionGenerationRef.current += 1;
+    actionControllerRef.current?.abort();
+    actionControllerRef.current = null;
+    setBusyAction("");
     setResolution(null);
     setWorkbookResult(null);
     setDraftResult(null);
@@ -488,22 +653,69 @@ export function TranWorkspace({
     setWorkspaceStep("input");
   }
 
-  function chooseCaseGroup(groupKey) {
-    const group = caseGroups.find((item) => item.key === groupKey);
-    const expanded = expandTranGroup(group);
-    if (expanded.length > MAX_TRAN_ASSETS) {
-      setActionError(translate(language, "tranTooManyAssets"));
-      return;
+  function applyCaseSelection(nextKeys, { announceChange = true } = {}) {
+    const nextSelection = selectTranGroupEntries(
+      caseGroups,
+      [...new Set(nextKeys || [])],
+      expandTranGroup,
+      MAX_TRAN_ASSETS,
+    );
+    if (nextSelection.overLimit) {
+      const message = translate(language, "tranBatchSelectAllExceeded")
+        .replace("{count}", String(nextSelection.assetCount));
+      setActionError(message);
+      pushToast(translate(language, "toastErrorTitle"), message, "error");
+      return false;
     }
-    setSelectedGroupKey(groupKey);
-    setSourceBindings(expanded.map((item) => item.binding));
-    setForms(expanded.length ? expanded.map((item) => item.form) : [{ ...EMPTY_FORM }]);
+    const previousForms = new Map(
+      sourceBindings.map((binding, index) => [tranBindingKey(binding), forms[index]]),
+    );
+    const nextEntries = nextSelection.entries;
+    const hadSnapshot = Boolean(
+      resolution || workbookResult || draftResult || outlookDraftResult || companionDraftResult,
+    );
+    setSelectedGroupKeys(nextSelection.groups.map((group) => group.key));
+    setSourceBindings(nextEntries.map((entry) => entry.binding));
+    setForms(nextEntries.length
+      ? nextEntries.map((entry) => previousForms.get(tranBindingKey(entry.binding)) || entry.form)
+      : [{ ...EMPTY_FORM }]);
     setEmailNotice("");
     invalidateOutputs();
+    setDraftBatchProgress(null);
     setWorkspaceStep("input");
+    setCasePickerOpen(false);
+    if (announceChange && hadSnapshot) {
+      pushToast(
+        translate(language, "toastInfoTitle"),
+        translate(language, "tranBatchChanged"),
+        "info",
+      );
+    }
+    return true;
+  }
+
+  function loadDemoData() {
+    setSelectedGroupKeys([]);
+    setSourceBindings([]);
+    setForms([{ ...DEMO_FORM, lost_date: localIsoDate() }]);
+    setEmailNotice("");
+    invalidateOutputs();
+    setDraftBatchProgress(null);
+    setWorkspaceStep("input");
+    setCasePickerOpen(false);
   }
 
   function removeAssetRow(index) {
+    const binding = sourceBindings[index];
+    if (binding) {
+      const sourceGroup = caseGroups.find((group) => (
+        group.cases.some((caseItem) => caseItem.id === binding.case_id)
+      ));
+      if (sourceGroup) {
+        applyCaseSelection(selectedGroupKeys.filter((key) => key !== sourceGroup.key));
+        return;
+      }
+    }
     if (forms.length <= 1) return;
     setForms((current) => current.filter((_, itemIndex) => itemIndex !== index));
     setSourceBindings((current) => current.filter((_, itemIndex) => itemIndex !== index));
@@ -598,6 +810,8 @@ export function TranWorkspace({
     const controller = new AbortController();
     actionControllerRef.current?.abort();
     actionControllerRef.current = controller;
+    const generation = actionGenerationRef.current + 1;
+    actionGenerationRef.current = generation;
     setBusyAction("resolve");
     setResolution(null);
     setWorkspaceStep("result");
@@ -611,6 +825,7 @@ export function TranWorkspace({
         buildTranAssetsPayload(forms, language),
         controller.signal,
       );
+      if (controller.signal.aborted || generation !== actionGenerationRef.current) return;
       setResolution(result);
       pushToast(
         translate(language, "toastSuccessTitle"),
@@ -618,13 +833,13 @@ export function TranWorkspace({
         result.ready ? "success" : "warning",
       );
     } catch (error) {
-      if (error.name !== "AbortError") {
+      if (error.name !== "AbortError" && generation === actionGenerationRef.current) {
         setResolution(null);
         setWorkspaceStep("input");
         pushToast(translate(language, "toastErrorTitle"), error.message, "error");
       }
     } finally {
-      if (!controller.signal.aborted) setBusyAction("");
+      if (!controller.signal.aborted && generation === actionGenerationRef.current) setBusyAction("");
     }
   }
 
@@ -633,6 +848,8 @@ export function TranWorkspace({
     const controller = new AbortController();
     actionControllerRef.current?.abort();
     actionControllerRef.current = controller;
+    const generation = actionGenerationRef.current + 1;
+    actionGenerationRef.current = generation;
     setBusyAction("workbook");
     setActionError("");
     setWorkbookResult(null);
@@ -643,6 +860,7 @@ export function TranWorkspace({
         yearSheet.trim(),
         controller.signal,
       );
+      if (controller.signal.aborted || generation !== actionGenerationRef.current) return;
       setWorkbookResult(result);
       pushToast(
         translate(language, "toastSuccessTitle"),
@@ -650,134 +868,173 @@ export function TranWorkspace({
         "success",
       );
     } catch (error) {
-      if (error.name !== "AbortError") {
+      if (error.name !== "AbortError" && generation === actionGenerationRef.current) {
         pushToast(translate(language, "toastErrorTitle"), error.message, "error");
       }
     } finally {
-      if (!controller.signal.aborted) setBusyAction("");
+      if (!controller.signal.aborted && generation === actionGenerationRef.current) setBusyAction("");
     }
   }
 
-  async function createDraft() {
+  async function createDraftBatch(mode, requestedBatches = sourceBatches, previousOutcome = null) {
     const intro = bodyIntro.trim();
-    if (!resolution?.ready || !canDraft || !sourceHandle) return;
+    const available = mode === "eml"
+      ? canDraft
+      : mode === "outlook"
+        ? canOutlookDraft && outlookMailboxConnected
+        : canCompanionDraft;
+    if (!resolution?.ready || !available || !draftSourcesReady) return;
     if (!intro) {
       setActionError(translate(language, "tranDraftIntroRequired"));
       return;
     }
-    const controller = new AbortController();
-    actionControllerRef.current?.abort();
-    actionControllerRef.current = controller;
-    setBusyAction("draft");
-    setActionError("");
-    setDraftResult(null);
-    setCompanionDraftResult(null);
-    try {
-      const result = await dashboardApi.createTranDraft(
-        buildTranAssetsPayload(forms, language),
-        sourceBindings,
-        sourceHandle,
-        intro,
-        processingDate,
-        yearSheet.trim(),
-        controller.signal,
-      );
-      setDraftResult(result);
-      pushToast(
-        translate(language, "toastSuccessTitle"),
-        translate(language, "tranDraftReady"),
-        "success",
-      );
-    } catch (error) {
-      if (error.name !== "AbortError") {
-        pushToast(translate(language, "toastErrorTitle"), error.message, "error");
-      }
-    } finally {
-      if (!controller.signal.aborted) setBusyAction("");
-    }
-  }
-
-  async function createOutlookDraft() {
-    const intro = bodyIntro.trim();
-    if (!resolution?.ready || !canOutlookDraft || !outlookMailboxConnected || !sourceHandle) return;
-    if (!intro) {
-      setActionError(translate(language, "tranDraftIntroRequired"));
+    if (!draftSourceLimitReady) {
+      setActionError(translate(language, "tranDraftSourceLimit"));
       return;
     }
+    if (!requestedBatches.length) return;
     const controller = new AbortController();
     actionControllerRef.current?.abort();
     actionControllerRef.current = controller;
-    setBusyAction("outlook-draft");
+    const generation = actionGenerationRef.current + 1;
+    actionGenerationRef.current = generation;
+    const requestFingerprints = new Map(
+      requestedBatches.map((batch) => [batch.key, draftFingerprint(mode, batch)]),
+    );
+    const busyKey = mode === "eml" ? "draft" : `${mode}-draft`;
+    setBusyAction(busyKey);
     setActionError("");
-    setOutlookDraftResult(null);
-    setCompanionDraftResult(null);
+    setDraftBatchProgress({ completed: 0, total: requestedBatches.length });
+    if (!previousOutcome && mode === "eml") setDraftResult(null);
+    if (!previousOutcome && mode === "outlook") setOutlookDraftResult(null);
+    if (!previousOutcome && mode === "companion") setCompanionDraftResult(null);
     try {
-      const result = await dashboardApi.createTranOutlookDraft(
-        buildTranAssetsPayload(forms, language),
-        sourceBindings,
-        sourceHandle,
-        intro,
-        processingDate,
-        yearSheet.trim(),
-        controller.signal,
+      const outcome = await runTranBatch(
+        requestedBatches,
+        (batch) => {
+          const args = [
+            buildTranAssetsPayload(batch.forms, language),
+            batch.bindings,
+            batch.handle,
+            intro,
+            processingDate,
+            yearSheet.trim(),
+            controller.signal,
+          ];
+          if (mode === "eml") return dashboardApi.createTranDraft(...args);
+          if (mode === "outlook") return dashboardApi.createTranOutlookDraft(...args);
+          return dashboardApi.createTranCompanionDraft(...args);
+        },
+        {
+          onSuccess: ({ batch }) => {
+            successfulDraftFingerprintsRef.current[mode].set(
+              batch.key,
+              requestFingerprints.get(batch.key),
+            );
+          },
+          onProgress: ({ completed, total }) => setDraftBatchProgress({ completed, total }),
+          shouldStop: (error) => {
+            const status = Number(error?.status || 0);
+            return !status || status === 401 || status === 403 || status >= 500;
+          },
+        },
       );
-      setOutlookDraftResult(result);
+      if (controller.signal.aborted || generation !== actionGenerationRef.current) return;
+      const replacedKeys = new Set(requestedBatches.map((batch) => batch.key));
+      const previousSuccesses = previousOutcome
+        ? previousOutcome.successes.filter(({ batch }) => !replacedKeys.has(batch.key))
+        : [];
+      const previousFailures = previousOutcome
+        ? previousOutcome.failures.filter(({ batch }) => !replacedKeys.has(batch.key))
+        : [];
+      const previousRemaining = previousOutcome
+        ? (previousOutcome.remaining || []).filter((batch) => !replacedKeys.has(batch.key))
+        : [];
+      const order = new Map(sourceBatches.map((batch, index) => [batch.key, index]));
+      const combinedOutcome = {
+        ...outcome,
+        successes: [...previousSuccesses, ...outcome.successes]
+          .sort((left, right) => order.get(left.batch.key) - order.get(right.batch.key)),
+        failures: [...previousFailures, ...outcome.failures]
+          .sort((left, right) => order.get(left.batch.key) - order.get(right.batch.key)),
+        remaining: [...previousRemaining, ...outcome.remaining]
+          .sort((left, right) => order.get(left.key) - order.get(right.key)),
+        attempted: previousSuccesses.length + outcome.attempted,
+        total: sourceBatches.length,
+      };
+      if (mode === "eml") setDraftResult(combinedOutcome);
+      if (mode === "outlook") setOutlookDraftResult(combinedOutcome);
+      if (mode === "companion") setCompanionDraftResult(combinedOutcome);
+      const incompleteCount = combinedOutcome.failures.length + combinedOutcome.remaining.length;
+      const allSucceeded = incompleteCount === 0 && !combinedOutcome.stopped;
+      const message = allSucceeded
+        ? translate(language, "tranDraftBatchAllReady").replace("{count}", String(combinedOutcome.successes.length))
+        : translate(language, "tranDraftBatchPartial")
+          .replace("{success}", String(combinedOutcome.successes.length))
+          .replace("{failed}", String(incompleteCount));
       pushToast(
-        translate(language, "toastSuccessTitle"),
-        translate(language, "tranOutlookDraftReady"),
-        "success",
+        translate(language, allSucceeded ? "toastSuccessTitle" : "toastWarningTitle"),
+        message,
+        allSucceeded ? "success" : "warning",
       );
-    } catch (error) {
-      if (error.name !== "AbortError") {
-        pushToast(translate(language, "toastErrorTitle"), error.message, "error");
-        if (error.status === 401 || error.status === 503) {
+      if (!allSucceeded) setActionError(message);
+      if (mode === "outlook") {
+        const authFailure = combinedOutcome.failures.some(({ error }) => [401, 503].includes(Number(error?.status)));
+        if (authFailure) {
           onOutlookMailboxInvalid?.();
           await Promise.resolve(onMailboxSynced?.()).catch(() => {});
         }
       }
-    } finally {
-      if (!controller.signal.aborted) setBusyAction("");
-    }
-  }
-
-  async function createCompanionDraft() {
-    const intro = bodyIntro.trim();
-    if (!resolution?.ready || !canCompanionDraft || !sourceHandle) return;
-    if (!intro) {
-      setActionError(translate(language, "tranDraftIntroRequired"));
-      return;
-    }
-    const controller = new AbortController();
-    actionControllerRef.current?.abort();
-    actionControllerRef.current = controller;
-    setBusyAction("companion-draft");
-    setActionError("");
-    setDraftResult(null);
-    setOutlookDraftResult(null);
-    setCompanionDraftResult(null);
-    try {
-      const result = await dashboardApi.createTranCompanionDraft(
-        buildTranAssetsPayload(forms, language),
-        sourceBindings,
-        sourceHandle,
-        intro,
-        processingDate,
-        yearSheet.trim(),
-        controller.signal,
-      );
-      setCompanionDraftResult(result);
-      pushToast(
-        translate(language, "toastSuccessTitle"),
-        translate(language, "tranCompanionDraftReady"),
-        "success",
-      );
     } catch (error) {
-      if (error.name !== "AbortError") {
+      if (error.name !== "AbortError" && generation === actionGenerationRef.current) {
         pushToast(translate(language, "toastErrorTitle"), error.message, "error");
       }
     } finally {
-      if (!controller.signal.aborted) setBusyAction("");
+      if (!controller.signal.aborted && generation === actionGenerationRef.current) {
+        setBusyAction("");
+        setDraftBatchProgress(null);
+      }
     }
+  }
+
+  function createDraft() {
+    return createDraftBatch("eml", draftBatchesNeedingCreation("eml"), draftResult);
+  }
+
+  function createOutlookDraft() {
+    return createDraftBatch("outlook", draftBatchesNeedingCreation("outlook"), outlookDraftResult);
+  }
+
+  function createCompanionDraft() {
+    return createDraftBatch("companion", draftBatchesNeedingCreation("companion"), companionDraftResult);
+  }
+
+  function retryDraftBatch(mode, outcome) {
+    const retryKeys = new Set([
+      ...outcome.failures
+        .filter(({ error }) => !isAmbiguousDraftError(error))
+        .map(({ batch }) => batch.key),
+      ...(outcome.remaining || []).map((batch) => batch.key),
+    ]);
+    return createDraftBatch(
+      mode,
+      sourceBatches.filter((batch) => retryKeys.has(batch.key)),
+      outcome,
+    );
+  }
+
+  function retryUncertainDraftBatch(mode, outcome) {
+    if (!window.confirm(translate(language, "tranDraftBatchUncertainConfirm"))) return undefined;
+    const retryKeys = new Set(
+      outcome.failures
+        .filter(({ error }) => isAmbiguousDraftError(error))
+        .map(({ batch }) => batch.key),
+    );
+    return createDraftBatch(
+      mode,
+      sourceBatches.filter((batch) => retryKeys.has(batch.key)),
+      outcome,
+    );
   }
 
   return (
@@ -904,39 +1161,76 @@ export function TranWorkspace({
             aria-controls="tran-step-input"
             aria-selected={workspaceStep === "input"}
             className={`tran-workbench-tab ${workspaceStep === "input" ? "is-active" : ""}`}
+            disabled={Boolean(busyAction)}
             id="tran-tab-input"
             onClick={() => setWorkspaceStep("input")}
             role="tab"
             type="button"
           >
             {translate(language, "tranStepInput")}
+            <span className="tran-workbench-tab__count">{forms.length}</span>
           </button>
           <button
             aria-controls="tran-step-result-output"
             aria-selected={workspaceStep === "result"}
             className={`tran-workbench-tab ${workspaceStep === "result" ? "is-active" : ""}`}
-            disabled={!resolution && busyAction !== "resolve"}
+            disabled={Boolean(busyAction) || !resolution}
             id="tran-tab-result"
             onClick={() => setWorkspaceStep("result")}
             role="tab"
             type="button"
           >
             {translate(language, "tranStepResult")}
+            {resolution && <span className="tran-workbench-tab__count">{resolvedItems.length}</span>}
           </button>
           <button
             aria-controls="tran-step-result-output"
             aria-selected={workspaceStep === "output"}
             className={`tran-workbench-tab ${workspaceStep === "output" ? "is-active" : ""}`}
-            disabled={!resolution?.ready}
+            disabled={Boolean(busyAction) || !resolution?.ready}
             id="tran-tab-output"
             onClick={() => setWorkspaceStep("output")}
             role="tab"
             type="button"
           >
             {translate(language, "tranStepOutput")}
+            {resolution?.ready && <span className="tran-workbench-tab__count">{sourceBatches.length || 1}</span>}
           </button>
         </div>
+        <div className="tran-batch-bar">
+          <div className="tran-batch-bar__summary" aria-live="polite">
+            <span>{translate(language, "tranBatchSelectionTitle")}</span>
+            <strong>
+              {selectedGroupKeys.length
+                ? translate(language, "tranBatchSelectedSummary")
+                  .replace("{cases}", String(selectedCaseCount))
+                  .replace("{assets}", String(sourceBindings.length))
+                : translate(language, "tranBatchManualMode")}
+            </strong>
+          </div>
+          <div className="tran-batch-bar__actions">
+            <button className="btn secondary" type="button" disabled={Boolean(busyAction)} onClick={() => setCasePickerOpen(true)}>
+              {translate(language, "tranBatchChoose")}
+            </button>
+            <button className="btn secondary" type="button" disabled={Boolean(busyAction) || !selectedGroupKeys.length} onClick={() => applyCaseSelection([])}>
+              {translate(language, "tranBatchClear")}
+            </button>
+            <button className="btn secondary" type="button" disabled={Boolean(busyAction)} onClick={loadDemoData}>
+              {translate(language, "loadDemo")}
+            </button>
+          </div>
+        </div>
       </nav>
+
+      <TranCasePickerDialog
+        groups={casePickerGroups}
+        language={language}
+        maxAssets={MAX_TRAN_ASSETS}
+        onApply={(keys) => applyCaseSelection(keys)}
+        onClose={() => setCasePickerOpen(false)}
+        open={casePickerOpen}
+        selectedKeys={selectedGroupKeys}
+      />
 
       <section
         aria-labelledby="tran-tab-input"
@@ -947,39 +1241,10 @@ export function TranWorkspace({
       >
         <h3>{translate(language, "compensationInput")}</h3>
         <form className="compensation-form" onSubmit={resolveAsset}>
-          <div className="compensation-prefill">
-            <label>
-              <span>{translate(language, "chooseLostCase")}</span>
-              <select value={selectedGroupKey} onChange={(event) => chooseCaseGroup(event.target.value)}>
-                <option value="">{translate(language, "manualEntry")}</option>
-                {caseGroups.map((group) => (
-                  <option value={group.key} key={group.key}>
-                    {group.handle
-                      ? `${group.cases[0]?.source_eml?.filename || group.cases[0]?.asset_code} · ${expandTranGroup(group).length} ${translate(language, "tranAssets")}`
-                      : `${group.cases[0]?.asset_code} · ${group.cases[0]?.domain}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              className="btn secondary"
-              type="button"
-              onClick={() => {
-                setSelectedGroupKey("");
-                setSourceBindings([]);
-                setForms([{ ...DEMO_FORM, lost_date: localIsoDate() }]);
-                setEmailNotice("");
-                invalidateOutputs();
-                setWorkspaceStep("input");
-              }}
-            >
-              {translate(language, "loadDemo")}
-            </button>
-          </div>
-
-          {selectedGroupKey && (
+          <fieldset className="tran-form-lock" disabled={Boolean(busyAction)}>
+          {selectedGroupKeys.length > 0 && (
             <div className="dialog-note is-warning" role="status">
-              <p>{translate(language, "casePrefillNotice")} {translate(language, "tranSameEmailGroupHint")}</p>
+              <p>{translate(language, "casePrefillNotice")} {translate(language, "tranBatchPerSourceHint")}</p>
             </div>
           )}
 
@@ -991,7 +1256,7 @@ export function TranWorkspace({
                   <span>{form.tag_number || translate(language, "manualEntry")}</span>
                   {forms.length > 1 && (
                     <button className="btn secondary button--compact" type="button" onClick={() => removeAssetRow(index)}>
-                      {translate(language, "tranRemoveAsset")}
+                      {translate(language, sourceBindings[index] ? "tranRemoveSourceGroup" : "tranRemoveAsset")}
                     </button>
                   )}
                 </header>
@@ -1055,6 +1320,7 @@ export function TranWorkspace({
             </button>
             <span className="disabled-note">{translate(language, "tranResolveHint")}</span>
           </div>
+          </fieldset>
         </form>
       </section>
 
@@ -1096,10 +1362,10 @@ export function TranWorkspace({
                 ))}
               </div>
               <div className="tran-step-actions">
-                <button className="btn secondary" type="button" onClick={() => setWorkspaceStep("input")}>
+                <button className="btn secondary" type="button" disabled={Boolean(busyAction)} onClick={() => setWorkspaceStep("input")}>
                   {translate(language, "tranEditAsset")}
                 </button>
-                <button className="btn" type="button" disabled={!resolution.ready} onClick={() => setWorkspaceStep("output")}>
+                <button className="btn" type="button" disabled={Boolean(busyAction) || !resolution.ready} onClick={() => setWorkspaceStep("output")}>
                   {translate(language, "tranContinueOutput")}
                 </button>
               </div>
@@ -1107,18 +1373,18 @@ export function TranWorkspace({
 
             <div className="tran-output-section" hidden={workspaceStep !== "output"}>
               <div className="tran-step-actions tran-step-actions--top">
-                <button className="btn secondary" type="button" onClick={() => setWorkspaceStep("result")}>
+                <button className="btn secondary" type="button" disabled={Boolean(busyAction)} onClick={() => setWorkspaceStep("result")}>
                   {translate(language, "tranBackToResult")}
                 </button>
-                <button className="btn secondary" type="button" onClick={() => setWorkspaceStep("input")}>
+                <button className="btn secondary" type="button" disabled={Boolean(busyAction)} onClick={() => setWorkspaceStep("input")}>
                   {translate(language, "tranEditAsset")}
                 </button>
               </div>
               <div className="panel-row tran-output-controls">
                 <label className="small" htmlFor="tran-processing-date">{translate(language, "tranProcessingDate")}</label>
-                <input id="tran-processing-date" type="date" value={processingDate} onChange={(event) => { setProcessingDate(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); setCompanionDraftResult(null); }} />
+                <input id="tran-processing-date" type="date" disabled={Boolean(busyAction)} value={processingDate} onChange={(event) => { setProcessingDate(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); setCompanionDraftResult(null); }} />
                 <label className="small" htmlFor="tran-year-sheet">{translate(language, "tranYearSheet")}</label>
-                <input id="tran-year-sheet" className="short-input" type="text" maxLength="31" value={yearSheet} placeholder={processingDate.slice(0, 4)} onChange={(event) => { setYearSheet(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); setCompanionDraftResult(null); }} />
+                <input id="tran-year-sheet" className="short-input" type="text" disabled={Boolean(busyAction)} maxLength="31" value={yearSheet} placeholder={processingDate.slice(0, 4)} onChange={(event) => { setYearSheet(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); setCompanionDraftResult(null); }} />
                 <button className="btn" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canExport} onClick={exportWorkbook}>
                   {translate(language, busyAction === "workbook" ? "tranExporting" : "tranExportWorkbook")}
                 </button>
@@ -1133,64 +1399,45 @@ export function TranWorkspace({
                 <textarea
                   id="tran-body-intro"
                   rows="4"
+                  disabled={Boolean(busyAction)}
                   maxLength="10000"
                   value={bodyIntro}
                   placeholder={translate(language, "tranDraftIntroPlaceholder")}
                   onChange={(event) => { setBodyIntro(event.target.value); setDraftResult(null); setOutlookDraftResult(null); setCompanionDraftResult(null); setActionError(""); }}
                 />
                 <div className="upload-actions">
-                  <button className="btn secondary" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canDraft || !sourceHandle} onClick={createDraft}>
-                    {translate(language, busyAction === "draft" ? "tranDrafting" : "tranCreateDraft")}
+                  <button className="btn secondary" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canDraft || !draftSourcesReady || !draftSourceLimitReady || pendingEmlDraftCount === 0} onClick={createDraft}>
+                    {translate(language, busyAction === "draft" ? "tranDrafting" : "tranCreateDraft")}{pendingEmlDraftCount > 1 ? ` (${pendingEmlDraftCount})` : ""}
                   </button>
-                  <button className="btn" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canOutlookDraft || !outlookMailboxConnected || !sourceHandle} onClick={createOutlookDraft}>
-                    {translate(language, busyAction === "outlook-draft" ? "tranOutlookDrafting" : "tranCreateOutlookDraft")}
+                  <button className="btn" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canOutlookDraft || !outlookMailboxConnected || !draftSourcesReady || !draftSourceLimitReady || pendingOutlookDraftCount === 0} onClick={createOutlookDraft}>
+                    {translate(language, busyAction === "outlook-draft" ? "tranOutlookDrafting" : "tranCreateOutlookDraft")}{pendingOutlookDraftCount > 1 ? ` (${pendingOutlookDraftCount})` : ""}
                   </button>
-                  <button className="btn" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canCompanionDraft || !sourceHandle} onClick={createCompanionDraft}>
-                    {translate(language, busyAction === "companion-draft" ? "tranCompanionDrafting" : "tranCreateCompanionDraft")}
+                  <button className="btn" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canCompanionDraft || !draftSourcesReady || !draftSourceLimitReady || pendingCompanionDraftCount === 0} onClick={createCompanionDraft}>
+                    {translate(language, busyAction === "companion-draft" ? "tranCompanionDrafting" : "tranCreateCompanionDraft")}{pendingCompanionDraftCount > 1 ? ` (${pendingCompanionDraftCount})` : ""}
                   </button>
                 </div>
                 <span className="disabled-note">{translate(language, "tranDraftSafety")}</span>
-                {!sourceHandle && <div className="disabled-note">{translate(language, selectedHandles.size > 1 ? "tranDraftMixedSources" : "tranDraftNeedsSource")}</div>}
+                {selectedGroupKeys.length > 1 && <div className="disabled-note">{translate(language, "tranDraftMixedSources")}</div>}
+                {!draftSourcesReady && <div className="disabled-note">{translate(language, "tranDraftNeedsSource")}</div>}
+                {!draftSourceLimitReady && <div className="disabled-note">{translate(language, "tranDraftSourceLimit")}</div>}
                 {!canDraft && <div className="disabled-note">{translate(language, "tranDraftUnavailable")}</div>}
                 {canOutlookDraft && !outlookMailboxConnected && <div className="disabled-note">{translate(language, "tranOutlookDraftNeedsConnection")}</div>}
                 {!canOutlookDraft && <div className="disabled-note">{translate(language, "tranOutlookDraftUnavailable")}</div>}
                 {!canCompanionDraft && <div className="disabled-note">{translate(language, "tranCompanionDraftUnavailable")}</div>}
+                {draftBatchProgress && (
+                  <div className="upload-progress" role="status">
+                    <span>
+                      {translate(language, "tranDraftBatchProgress")
+                        .replace("{done}", String(draftBatchProgress.completed))
+                        .replace("{total}", String(draftBatchProgress.total))}
+                    </span>
+                    <progress max={draftBatchProgress.total} value={draftBatchProgress.completed} />
+                  </div>
+                )}
               </div>
-              {draftResult && (
-                <div className="upload-result">
-                  <strong>{translate(language, "tranDraftReady")}</strong>
-                  <div className="result-list">
-                    {draftResult.workbook_download_url && <div className="result-file"><span>{translate(language, "tranDraftWorkbook")}</span><a href={draftResult.workbook_download_url} download>↓ Excel</a></div>}
-                    {draftResult.draft_download_url && <div className="result-file"><span>{translate(language, "tranUnsentEml")}</span><a href={draftResult.draft_download_url} download>↓ EML</a></div>}
-                  </div>
-                </div>
-              )}
-              {outlookDraftResult && (
-                <div className="upload-result">
-                  <strong>{translate(language, "tranOutlookDraftReady")}</strong>
-                  <div className="result-list">
-                    {outlookDraftResult.workbook_download_url && <div className="result-file"><span>{translate(language, "tranDraftWorkbook")}</span><a href={outlookDraftResult.workbook_download_url} download>↓ Excel</a></div>}
-                    <div className="result-file">
-                      <span>{outlookDraftResult.outlook_draft?.subject || translate(language, "tranOutlookDraftNoSubject")}</span>
-                      {outlookDraftResult.outlook_draft?.web_url
-                        ? <a href={outlookDraftResult.outlook_draft.web_url} target="_blank" rel="noreferrer">{translate(language, "tranOpenOutlookDraft")}</a>
-                        : <span className="none">{translate(language, "tranOutlookDraftOpenUnavailable")}</span>}
-                    </div>
-                  </div>
-                </div>
-              )}
-              {companionDraftResult && (
-                <div className="upload-result">
-                  <strong>{translate(language, "tranCompanionDraftReady")}</strong>
-                  <p>{translate(language, "tranCompanionDraftReadyHint")}</p>
-                  {companionDraftResult.workbook_download_url && (
-                    <div className="result-file">
-                      <span>{translate(language, "tranDraftWorkbook")}</span>
-                      <a href={companionDraftResult.workbook_download_url} download>↓ Excel</a>
-                    </div>
-                  )}
-                </div>
-              )}
+              <TranDraftBatchResult busy={Boolean(busyAction)} language={language} mode="eml" outcome={draftResult} onRetry={() => retryDraftBatch("eml", draftResult)} onRetryUncertain={() => retryUncertainDraftBatch("eml", draftResult)} />
+              <TranDraftBatchResult busy={Boolean(busyAction)} language={language} mode="outlook" outcome={outlookDraftResult} onRetry={() => retryDraftBatch("outlook", outlookDraftResult)} onRetryUncertain={() => retryUncertainDraftBatch("outlook", outlookDraftResult)} />
+              <TranDraftBatchResult busy={Boolean(busyAction)} language={language} mode="companion" outcome={companionDraftResult} onRetry={() => retryDraftBatch("companion", companionDraftResult)} onRetryUncertain={() => retryUncertainDraftBatch("companion", companionDraftResult)} />
             </div>
           </>
         )}

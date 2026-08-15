@@ -164,6 +164,22 @@ non-table case identity); clients cannot override those source-provenance
 fields. Other supported asset fields can still carry an operator-approved
 correction.
 
+The React workspace can select several source-email groups in one operation,
+up to the existing 100-asset request limit. Resolution and ordinary workbook
+export preserve the flattened dashboard/source-row order in one combined
+request. Draft endpoints deliberately remain single-source: the client
+partitions the selected rows by retained handle and calls the endpoint
+sequentially once per original email. It never mixes recipients or bindings
+from two source emails in one Reply-All draft. A normal per-source validation
+failure is reported without discarding draft links already created for other
+sources; connection/authentication/server failures stop the remaining queue.
+At most 20 source-email drafts are created in one UI operation.
+Confirmed successes are fingerprinted per mode and source for the current UI
+session, so editing or retrying another source does not recreate an unchanged
+draft. A missing response or server failure is shown as an uncertain outcome
+and is never included in the normal retry button; the operator must first check
+Outlook/Product and explicitly confirm an uncertain retry.
+
 `POST /api/tran/outlook-drafts` uses the same `assets`, `source_bindings`,
 retained-handle, and source-validation contract before it creates the Graph
 Reply-All draft.

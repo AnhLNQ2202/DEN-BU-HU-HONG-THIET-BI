@@ -1541,6 +1541,10 @@ label.small {
 }
 
 .tran-workbench-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   min-height: 42px;
   padding: 8px 12px;
   border: 1px solid transparent;
@@ -1564,6 +1568,61 @@ label.small {
 
 .tran-workbench-tab:disabled {
   opacity: 0.48;
+}
+
+.tran-workbench-tab__count {
+  display: inline-grid;
+  min-width: 22px;
+  min-height: 22px;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(37, 54, 138, 0.1);
+  color: var(--vng-navy);
+  font-size: 11px;
+}
+
+.tran-workbench-tab.is-active .tran-workbench-tab__count {
+  background: var(--surface);
+  color: var(--vng-orange-dark);
+}
+
+.tran-batch-bar {
+  display: grid;
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 8px 6px 2px;
+  border-top: 1px solid var(--border);
+}
+
+.tran-batch-bar__summary {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.tran-batch-bar__summary > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tran-batch-bar__summary strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tran-batch-bar__actions {
+  display: flex;
+  gap: 7px;
+}
+
+.tran-batch-bar__actions .btn {
+  min-height: 36px;
+  padding: 7px 11px;
 }
 
 .tran-workbench-panel[hidden],
@@ -1829,6 +1888,15 @@ label.small {
   gap: 15px;
 }
 
+.tran-form-lock {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  gap: 15px;
+  border: 0;
+}
+
 .compensation-prefill {
   display: flex;
   align-items: flex-end;
@@ -2079,6 +2147,185 @@ label.small {
 .outlook-connections-dialog {
   width: min(1120px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
+}
+
+.tran-case-picker {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+}
+
+.tran-case-picker__surface {
+  display: grid;
+  max-height: calc(100vh - 32px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.tran-case-picker .dialog__header p {
+  max-width: 500px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tran-case-picker .dialog__header > div {
+  min-width: 0;
+}
+
+.tran-case-picker .dialog__header .icon-button {
+  flex: 0 0 auto;
+}
+
+.tran-case-picker__body {
+  display: grid;
+  min-height: 0;
+  gap: 12px;
+}
+
+.tran-case-picker__search {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tran-case-picker__tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tran-case-picker__select-all,
+.tran-case-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tran-case-picker__select-all {
+  min-height: 36px;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.tran-case-picker__select-all input,
+.tran-case-option input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  accent-color: var(--vng-orange);
+}
+
+.tran-case-picker__list {
+  display: grid;
+  max-height: min(50vh, 430px);
+  gap: 7px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.tran-case-option {
+  min-height: 58px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.tran-case-option:hover,
+.tran-case-option:focus-within {
+  border-color: var(--vng-orange);
+  background: var(--vng-orange-tint);
+}
+
+.tran-case-option:focus-within {
+  outline: 3px solid rgba(37, 54, 138, 0.28);
+  outline-offset: 1px;
+}
+
+.tran-case-option__copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.tran-case-option__copy strong,
+.tran-case-option__copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tran-case-option__copy span,
+.tran-case-option__count {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.tran-case-option__count {
+  flex: 0 0 auto;
+}
+
+.tran-batch-result {
+  margin-top: 12px;
+}
+
+.tran-batch-result__list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.tran-batch-result__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 7px;
+}
+
+.tran-batch-result__item.is-success {
+  border-left-color: var(--success);
+}
+
+.tran-batch-result__item.is-failed {
+  border-left-color: var(--danger);
+}
+
+.tran-batch-result__item.is-pending {
+  border-left-color: #b67b15;
+}
+
+.tran-batch-result__item > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.tran-batch-result__item > div:first-child strong,
+.tran-batch-result__item > div:first-child span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tran-batch-result__item span {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.tran-batch-result__links {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
 }
 
 .outlook-connections-surface {
@@ -2601,6 +2848,69 @@ label.small {
     padding: 7px 5px;
     font-size: 11.5px;
     line-height: 1.25;
+  }
+
+  .tran-workbench-tab__count {
+    min-width: 19px;
+    min-height: 19px;
+    padding: 0 5px;
+    font-size: 10px;
+  }
+
+  .tran-batch-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .tran-batch-bar__actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .tran-batch-bar__actions .btn {
+    min-height: 44px;
+  }
+
+  .tran-batch-bar__actions .btn:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .tran-case-picker {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .tran-case-picker__surface {
+    max-height: calc(100dvh - 16px);
+  }
+
+  .tran-case-picker .dialog__header,
+  .tran-case-picker__body {
+    padding: 14px;
+  }
+
+  .tran-case-picker__tools,
+  .tran-batch-result__item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tran-case-picker__select-all,
+  .tran-case-option {
+    min-height: 52px;
+  }
+
+  .tran-case-picker .icon-button,
+  .tran-case-picker .dialog__footer .button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .tran-case-option__count {
+    display: none;
+  }
+
+  .tran-batch-result__links {
+    flex-wrap: wrap;
   }
 
   .tran-resolution-summary {

@@ -58,7 +58,7 @@ Snapshot hiện tại được cập nhật ngày **2026-08-16**:
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Candidate local gate | 391 collected = 389 pass + 2 expected platform skips; Ruff/diff-check + production Docker build/container smoke pass |
+| Candidate local gate | 393 collected = 391 pass + 2 expected platform skips; 20 frontend Node contracts, Ruff/diff-check and production Docker build pass |
 | Frontend candidate | 8 Node contract tests; Vite 51 modules; tracked dist regenerated |
 | Candidate deploy status | Render staging **Live** tại deploy `dep-da0d0gc9v7es7393qhrg`; M365 env vẫn chủ động để trống |
 | Release verdict | GitHub CI, Docker và smoke staging xanh; chưa phải production multi-user |
@@ -242,9 +242,10 @@ flowchart TD
 Chi tiết:
 
 1. Upload EML ở phân hệ TranNNB, kết nối account Tran Microsoft 365 và sync đúng
-   một folder, hoặc nạp mail bằng Add-in/Local Bridge no-Graph. UI chọn một mail
-   nguồn sẽ tự nhóm các case có cùng retained
-   EML và bung từng `metadata.asset_rows` thành danh sách 1–100 tài sản. Một case
+   một folder, hoặc nạp mail bằng Add-in/Local Bridge no-Graph. Một bộ chọn batch
+   dùng chung ở cả ba bước cho phép tìm, chọn nhiều email/case hoặc chọn tất cả;
+   UI tự nhóm case có cùng retained EML và bung từng `metadata.asset_rows` thành
+   danh sách tối đa 100 tài sản theo đúng thứ tự nguồn. Một case
    LOST cùng domain có thể đại diện nhiều dòng tài sản, không được coi một case
    luôn tương đương một tài sản.
 2. Upload một FA&GL `.xlsx`; CCDC `.xlsx` là optional. Managed upload ưu tiên
@@ -265,15 +266,21 @@ Chi tiết:
    Lời mở đầu luôn do operator nhập nội dung đã được duyệt; product không tự thêm
    `Dear all` hoặc câu mẫu. Mail nguồn được quote bên dưới dưới dạng text đã escape,
    tối đa 100.000 ký tự; HTML chủ động, form, script và tài nguyên từ xa của mail
-   nguồn không được đưa nguyên trạng vào draft.
+    nguồn không được đưa nguyên trạng vào draft.
+   Khi chọn nhiều nguồn, UI tuần tự tạo một draft cho từng retained EML, ghi nhớ
+   fingerprint thành công theo mode/source trong session để không lặp lại draft
+   không đổi. Kết quả mất response hoặc lỗi server được đánh dấu chưa rõ, không
+   tự retry; operator phải kiểm Outlook/Product và xác nhận rõ trước khi thử lại.
 7. Khi account Tran đã kết nối, product còn có thể đọc exact `Message-ID` từ EML
    đã retain, tìm **đúng một** message trong mailbox `/me`, gọi Graph
    `createReplyAll`, prepend intro đã escape + cùng bảng Tran, attach workbook mới
    và trả Outlook web link đã allowlist. Nếu update/attach lỗi, service cố xóa
    draft tạm và báo rõ khi rollback không chắc chắn. Quyền là `Mail.ReadWrite`
    vì Graph cần nó để tạo draft; product không xin `Mail.Send` và không gửi.
-8. Cùng retained EML có thể dùng cho PDF. Draft của một nhóm nhiều tài sản chỉ
-   cho phép khi mọi dòng dùng cùng source handle. Mỗi asset draft mang binding
+8. Cùng retained EML có thể dùng cho PDF. Nhiều nguồn có thể đối chiếu và xuất
+   một workbook chung, nhưng draft luôn được tách tuần tự thành đúng một draft
+   cho mỗi source handle, tối đa 20 source mail/lượt; không trộn người nhận hay
+   thread giữa hai mail. Mỗi asset draft mang binding
    `{case_id, source_row_index}`; `case_id` được lặp với row index khác nhau,
    nhưng composite không được trùng. Server đối chiếu Tag/Domain với đúng dòng
    nguồn, còn UI khóa hai field này; case `ACCOUNTED/CLOSED` không được tạo output
@@ -859,9 +866,12 @@ download phải opaque và path phải được resolve dưới managed root.
   cancel, warnings/results và reset nonce. Tên file/case/warning dài nằm trong
   disclosure đóng mặc định; số lượng và lỗi thao tác chính vẫn luôn nhìn thấy.
 - `TaskWorkspace.jsx`: Ngan controls, accounting export and PDF panel.
-- `TranWorkspace.jsx`: reference status/upload, group theo retained EML, bung
-  `asset_rows` thành row-bound multi-asset forms, resolve results và
-  workbook/local draft/Outlook draft actions.
+- `TranWorkspace.jsx`: reference status/upload, bộ chọn batch dùng chung ba bước,
+  group theo retained EML, bung `asset_rows` thành row-bound multi-asset forms,
+  resolve/export chung và tuần tự tạo một local/Outlook/companion draft cho mỗi
+  mail nguồn.
+- `TranCasePickerDialog.jsx`: popup tìm kiếm, checkbox native, chọn tất cả,
+  tri-state và giới hạn all-or-nothing 100 tài sản.
 - `M365MailboxPanel.jsx`: reusable Ngan/Tran account status, Connect/Disconnect,
   exact-folder selection, manual sync, 5-minute visible-tab auto-sync opt-in.
 - `OutlookCompanionPanel.jsx`: giải thích child-simple “dùng cách này thì chuyện
