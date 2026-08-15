@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import re
 from collections.abc import Callable, Mapping
 from contextlib import suppress
@@ -9,6 +11,7 @@ from datetime import date, datetime
 from functools import wraps
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from flask import (
@@ -35,6 +38,7 @@ from asset_compensation.adapters import (
     TranWorkbookAdapter,
     TranWorkbookError,
     build_tran_mail_table,
+    build_tran_outlook_body,
 )
 from asset_compensation.demo import seed_demo
 from asset_compensation.domain import (
@@ -44,6 +48,12 @@ from asset_compensation.domain import (
     CaseType,
     ValidationError,
 )
+from asset_compensation.integrations import (
+    build_local_bridge_zip,
+    canonical_public_origin,
+    render_outlook_addin_manifest,
+    resolve_outlook_addin_asset,
+)
 from asset_compensation.parsers import (
     SupplierLoadError,
     load_supplier_directory,
@@ -51,6 +61,8 @@ from asset_compensation.parsers import (
 )
 from asset_compensation.services import (
     M365_SESSION_COOKIE,
+    CompanionPackageError,
+    CompanionPrincipal,
     MailArtifactError,
     TranAssetRequest,
     safe_eml_basename,
@@ -98,6 +110,22 @@ def _extension(name: str) -> Any:
 
 def _m365_session_id() -> str | None:
     return request.cookies.get(M365_SESSION_COOKIE)
+
+
+def _companion_principal() -> CompanionPrincipal:
+    """Authenticate an exact bearer header before parsing client input."""
+
+    authorization = request.headers.get("Authorization", "")
+    parts = authorization.split(" ")
+    if (
+        len(parts) != 2
+        or parts[0].casefold() != "bearer"
+        or not 20 <= len(parts[1]) <= 256
+        or any(ord(character) < 33 or ord(character) > 126 for character in parts[1])
+    ):
+        # The service owns the uniform public error contract.
+        return _extension("companion_service").authenticate("")
+    return _extension("companion_service").authenticate(parts[1])
 
 
 def _set_m365_session_cookie(response: Any, session_id: str) -> None:
@@ -344,6 +372,23 @@ def _private_download(
     return response
 
 
+def _companion_public_origin(settings: Any) -> str:
+    """Resolve a trusted origin; only localhost may fall back to request Host."""
+
+    if settings.public_origin:
+        return canonical_public_origin(settings.public_origin)
+    candidate = canonical_public_origin(request.host_url)
+    if (urlsplit(candidate).hostname or "").casefold() not in {
+        "127.0.0.1",
+        "::1",
+        "localhost",
+    }:
+        raise ValidationError(
+            "ASSET_HUB_PUBLIC_ORIGIN must be configured before downloading Outlook tools"
+        )
+    return candidate
+
+
 def _unavailable(message: str) -> tuple[Any, int]:
     return jsonify({"ok": False, "error": message, "capability_available": False}), 503
 
@@ -367,6 +412,10 @@ def _capabilities(settings: Any) -> dict[str, Any]:
         "tran_lookup": reference_status["fa_gl"]["available"],
         "tran_workbook_export": template_available,
         "tran_draft": bool(retention and template_available and settings.draft_from_address),
+        "companion_pairing": retention,
+        "outlook_addin": True,
+        "local_bridge": True,
+        "tran_companion_draft": bool(retention and template_available),
         "mail_pdf_individual": mail_pdf,
         "mail_pdf_batch": bool(mail_pdf and pypdf),
         "mail_pdf_backend": _extension("pdf_backend") if mail_pdf else None,
@@ -521,6 +570,49 @@ def _batch_dict(batch: Any, service: Any, settings: Any) -> dict[str, Any]:
 @blueprint.get("/")
 def index() -> str:
     return render_template("index.html")
+
+
+@blueprint.get("/outlook-addin/<filename>")
+def outlook_addin_asset(filename: str) -> Any:
+    path = resolve_outlook_addin_asset(filename)
+    mimetypes = {
+        "logo.png": "image/png",
+        "logo-16.png": "image/png",
+        "logo-32.png": "image/png",
+        "logo-64.png": "image/png",
+        "logo-80.png": "image/png",
+        "logo-128.png": "image/png",
+        "taskpane.css": "text/css",
+        "taskpane.html": "text/html",
+        "taskpane.js": "text/javascript",
+    }
+    return send_file(path, mimetype=mimetypes[filename], conditional=True)
+
+
+@blueprint.get("/api/companion/downloads/outlook-addin-manifest.xml")
+def download_outlook_addin_manifest() -> Any:
+    settings, _, _ = _dependencies()
+    content = render_outlook_addin_manifest(_companion_public_origin(settings))
+    return send_file(
+        io.BytesIO(content),
+        mimetype="application/xml",
+        as_attachment=True,
+        download_name="asset-compensation-hub-outlook.xml",
+        max_age=0,
+    )
+
+
+@blueprint.get("/api/companion/downloads/local-bridge.zip")
+def download_local_bridge() -> Any:
+    settings, _, _ = _dependencies()
+    content = build_local_bridge_zip(_companion_public_origin(settings))
+    return send_file(
+        io.BytesIO(content),
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="asset-hub-outlook-bridge.zip",
+        max_age=0,
+    )
 
 
 @blueprint.get("/api/health")
@@ -883,6 +975,7 @@ def clear_test_data() -> Any:
     artifact_count = _extension("mail_artifact_store").clear_managed()
     managed_output_count = _clear_managed_tran_outputs(settings)
     m365_session_count = _extension("m365_connection_service").clear_all_sessions()
+    companion_counts = _extension("companion_service").clear_all()
     return jsonify(
         {
             "ok": True,
@@ -892,6 +985,7 @@ def clear_test_data() -> Any:
             "mail_artifact_count": artifact_count,
             "tran_managed_output_count": managed_output_count,
             "m365_session_count": m365_session_count,
+            **companion_counts,
         }
     )
 
@@ -899,6 +993,59 @@ def clear_test_data() -> Any:
 @blueprint.get("/api/suppliers/status")
 def supplier_upload_status() -> Any:
     return jsonify({"ok": True, "status": _extension("supplier_upload_service").status()})
+
+
+@blueprint.post("/api/companion/pairings")
+def create_companion_pairing() -> Any:
+    settings, _, _ = _dependencies()
+    if not settings.retain_raw_eml:
+        return _unavailable("Raw EML retention is disabled")
+    if request.headers.get("X-Asset-Hub-Action") != "companion-pair-v1":
+        raise ValidationError("The required companion-pair action header is invalid")
+    data = _json_body()
+    _require_exact_keys(
+        data,
+        allowed={"role", "client_type"},
+        required={"role", "client_type"},
+    )
+    role = data.get("role")
+    client_type = data.get("client_type")
+    if role not in {"ngan", "tran"}:
+        raise ValidationError("role must be ngan or tran")
+    if client_type not in {"outlook_addin", "local_bridge"}:
+        raise ValidationError("client_type must be outlook_addin or local_bridge")
+    pairing = _extension("companion_service").create_pairing(role, client_type)
+    return jsonify(
+        {
+            "ok": True,
+            "pairing": {
+                "code": pairing.code,
+                "role": pairing.role,
+                "client_type": pairing.client_type,
+                "expires_in_seconds": pairing.expires_in_seconds,
+            },
+        }
+    ), 201
+
+
+@blueprint.post("/api/companion/exchange")
+def exchange_companion_pairing() -> Any:
+    data = _json_body()
+    _require_exact_keys(data, allowed={"code"}, required={"code"})
+    code = data.get("code")
+    if not isinstance(code, str):
+        raise ValidationError("code must be a string")
+    exchange = _extension("companion_service").exchange(code)
+    return jsonify(
+        {
+            "ok": True,
+            "token": exchange.token,
+            "token_type": "Bearer",
+            "expires_in_seconds": exchange.expires_in_seconds,
+            "role": exchange.principal.role,
+            "client_type": exchange.principal.client_type,
+        }
+    )
 
 
 @blueprint.post("/api/suppliers/upload")
@@ -939,16 +1086,9 @@ def upload_suppliers() -> Any:
     ), 201
 
 
-@blueprint.post("/api/emails/upload")
-@_serialized_mutation
-def upload_emails() -> Any:
-    _require_upload_header("email-v1")
-    if request.mimetype != "multipart/form-data":
-        raise ValidationError("Email upload must use multipart/form-data")
-    if set(request.files.keys()) != {"files"} or request.form:
-        raise ValidationError("Upload one or more EML files using the files field")
+def _ingest_email_uploads(file_storages: list[Any]) -> dict[str, Any]:
+    """Run the authoritative validation, retention, and ingestion pipeline."""
 
-    file_storages = request.files.getlist("files")
     uploads = [
         EmailUpload(
             filename=item.filename or "",
@@ -1044,21 +1184,94 @@ def upload_emails() -> Any:
         case_types[key] = case_types.get(key, 0) + 1
     case_label = "case" if len(cases) == 1 else "cases"
     email_label = "email" if len(payloads) == 1 else "emails"
+    return {
+        "ok": True,
+        "message": (
+            f"Created {len(cases)} {case_label} from {len(payloads)} uploaded {email_label}"
+        ),
+        "received_count": len(payloads),
+        "ingested": len(cases),
+        "case_ids": [case["id"] for case in cases],
+        "case_types": case_types,
+        "cases": cases,
+        "retained_source_count": len(referenced_handles),
+        "warnings": list(result.warnings),
+        "unknown_files": list(result.unknown_files),
+        "skipped_files": list(result.skipped_files),
+    }
+
+
+@blueprint.post("/api/emails/upload")
+@_serialized_mutation
+def upload_emails() -> Any:
+    _require_upload_header("email-v1")
+    if request.mimetype != "multipart/form-data":
+        raise ValidationError("Email upload must use multipart/form-data")
+    if set(request.files.keys()) != {"files"} or request.form:
+        raise ValidationError("Upload one or more EML files using the files field")
+    return jsonify(_ingest_email_uploads(request.files.getlist("files")))
+
+
+@blueprint.post("/api/companion/client/emails")
+@_serialized_mutation
+def upload_companion_email() -> Any:
+    principal = _companion_principal()
+    settings, _, _ = _dependencies()
+    if not settings.retain_raw_eml:
+        return _unavailable("Raw EML retention is disabled")
+    if request.content_length is None or request.content_length > 3 * 1024 * 1024:
+        raise ValidationError("Companion email request exceeds the safe size limit")
+    if request.headers.get("X-Asset-Hub-Upload") != "companion-email-v1":
+        raise ValidationError("The required companion-email upload header is invalid")
+    if request.mimetype != "multipart/form-data":
+        raise ValidationError("Companion email upload must use multipart/form-data")
+    if set(request.files.keys()) != {"file"} or request.form:
+        raise ValidationError("Upload exactly one EML file using the file field")
+    file_storages = request.files.getlist("file")
+    if len(file_storages) != 1:
+        raise ValidationError("Upload exactly one EML file using the file field")
+
+    result = _ingest_email_uploads(file_storages)
+    handles: set[str] = set()
+    client_cases: list[dict[str, Any]] = []
+    for case in result["cases"]:
+        client_case = {"id": case["id"], "case_type": case["case_type"]}
+        source = case.get("source_eml")
+        if isinstance(source, dict):
+            handle = source.get("handle")
+            filename = source.get("filename")
+            if (
+                isinstance(handle, str)
+                and _ARTIFACT_HANDLE_RE.fullmatch(handle)
+                and isinstance(filename, str)
+            ):
+                handles.add(handle)
+                client_case["source_eml"] = {
+                    "handle": handle,
+                    "filename": filename,
+                }
+        client_cases.append(client_case)
+    for handle in handles:
+        _extension("companion_service").record_uploaded_handle(principal, handle)
+
     return jsonify(
         {
-            "ok": True,
-            "message": (
-                f"Created {len(cases)} {case_label} from {len(payloads)} uploaded {email_label}"
+            **result,
+            "role": principal.role,
+            "client_type": principal.client_type,
+            "cases": client_cases,
+            "source_eml": (
+                {
+                    "handle": next(iter(handles)),
+                    "filename": next(
+                        item["source_eml"]["filename"]
+                        for item in client_cases
+                        if item.get("source_eml", {}).get("handle") in handles
+                    ),
+                }
+                if len(handles) == 1
+                else None
             ),
-            "received_count": len(payloads),
-            "ingested": len(cases),
-            "case_ids": [case["id"] for case in cases],
-            "case_types": case_types,
-            "cases": cases,
-            "retained_source_count": len(referenced_handles),
-            "warnings": list(result.warnings),
-            "unknown_files": list(result.unknown_files),
-            "skipped_files": list(result.skipped_files),
         }
     )
 
@@ -1303,6 +1516,131 @@ def create_tran_draft() -> Any:
             "sent": False,
         }
     ), 201
+
+
+@blueprint.post("/api/tran/companion-drafts")
+@_serialized_mutation
+def create_tran_companion_draft() -> Any:
+    settings, _, service = _dependencies()
+    if not settings.retain_raw_eml:
+        return _unavailable("Raw EML retention is disabled")
+    data = _json_body()
+    _require_exact_keys(
+        data,
+        allowed={
+            "assets",
+            "source_bindings",
+            "mail_artifact_handle",
+            "body_intro",
+            "processing_date",
+            "year_sheet",
+        },
+        required={"assets", "source_bindings", "mail_artifact_handle", "body_intro"},
+    )
+    handle = str(data.get("mail_artifact_handle") or "")
+    if not _ARTIFACT_HANDLE_RE.fullmatch(handle):
+        raise ValidationError("mail_artifact_handle is invalid")
+    _require_tran_source_binding(data, handle, service)
+    body_intro = data.get("body_intro")
+    if not isinstance(body_intro, str) or not body_intro.strip() or len(body_intro) > 10_000:
+        raise ValidationError("body_intro must contain 1 to 10,000 characters")
+    try:
+        _extension("mail_artifact_store").resolve(handle)
+    except MailArtifactError as exc:
+        raise ValidationError("Retained source email is unavailable") from exc
+
+    workbook_path: Path | None = None
+    try:
+        resolutions, workbook_path, output_id = _export_tran_workbook(data)
+        body_html = build_tran_outlook_body(
+            resolutions,
+            body_intro.strip(),
+            "",
+            "html",
+        )
+        package = _extension("companion_service").register_draft_package(
+            package_id=output_id,
+            artifact_handle=handle,
+            asset_count=len(resolutions),
+            body_html=body_html,
+            workbook_path=workbook_path,
+            output_root=settings.tran_output_dir,
+        )
+    except (OSError, OutputExistsError, TranMailError, CompanionPackageError) as exc:
+        if workbook_path is not None:
+            workbook_path.unlink(missing_ok=True)
+        raise ValidationError("Could not create the companion draft package") from exc
+    return jsonify(
+        {
+            "ok": True,
+            "output_id": output_id,
+            "package_id": package.package_id,
+            "asset_count": len(resolutions),
+            "workbook_download_url": f"/api/tran/workbooks/{output_id}/download",
+            "package": package.metadata(),
+            "sent": False,
+        }
+    ), 201
+
+
+@blueprint.get("/api/companion/client/draft-packages")
+def list_companion_draft_packages() -> Any:
+    principal = _companion_principal()
+    packages = _extension("companion_service").list_draft_packages(principal)
+    return jsonify(
+        {
+            "ok": True,
+            "role": principal.role,
+            "packages": [package.metadata() for package in packages],
+        }
+    )
+
+
+@blueprint.get("/api/companion/client/draft-packages/<package_id>")
+@_serialized_mutation
+def get_companion_draft_package(package_id: str) -> Any:
+    principal = _companion_principal()
+    settings, _, _ = _dependencies()
+    package = _extension("companion_service").get_draft_package(
+        principal,
+        package_id,
+        output_root=settings.tran_output_dir,
+    )
+    workbook_content = package.workbook_path.read_bytes()
+    if not workbook_content or len(workbook_content) > 25 * 1024 * 1024:
+        raise CompanionPackageError("Draft workbook exceeds the safe size limit")
+    return jsonify(
+        {
+            "ok": True,
+            "package": {
+                **package.metadata(),
+                "body_html": package.body_html,
+                "workbook": {
+                    "filename": package.workbook_filename,
+                    "content_type": package.workbook_content_type,
+                    "content_base64": base64.b64encode(workbook_content).decode("ascii"),
+                },
+            },
+        }
+    )
+
+
+@blueprint.post("/api/companion/client/draft-packages/<package_id>/ack")
+def acknowledge_companion_draft_package(package_id: str) -> Any:
+    principal = _companion_principal()
+    if request.headers.get("X-Asset-Hub-Action") != "companion-ack-v1":
+        raise ValidationError("The required companion acknowledgement header is invalid")
+    if _json_body() != {}:
+        raise ValidationError("Companion acknowledgement body must be an empty JSON object")
+    _extension("companion_service").acknowledge_draft_package(principal, package_id)
+    return jsonify(
+        {
+            "ok": True,
+            "id": package_id,
+            "acknowledged": True,
+            "sent": False,
+        }
+    )
 
 
 @blueprint.post("/api/tran/outlook-drafts")

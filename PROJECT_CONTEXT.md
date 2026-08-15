@@ -18,14 +18,15 @@ sản IT bị hư hỏng hoặc thất lạc. Product thay thế chuỗi script 
 bằng một workflow có trạng thái, audit, kiểm tra dữ liệu và output có kiểm soát:
 
 1. Upload Supplier Active + Inactive.
-2. Upload email `.eml` hoặc, khi cấu hình Microsoft 365, kết nối mailbox riêng
-   cho từng vai trò và sync email mới từ đúng một folder đã chọn; parser có thể
-   tạo nhiều hồ sơ từ một email.
+2. Nạp email bằng upload `.eml`, Microsoft 365 exact-folder sync, Outlook Add-in
+   cho từng mail đang mở, hoặc Windows Local Bridge cho hai exact folder
+   Ngan/Tran trong Classic Outlook; parser có thể tạo nhiều hồ sơ từ một email.
 3. Review hồ sơ `DAMAGED`/`LOST`, cảnh báo và trạng thái.
 4. Với NganTLT: xuất batch hạch toán theo template gốc và ghép PDF chứng từ.
 5. Với TranNNB: upload FA&GL/CCDC, resolve tài sản, tính đền bù, xuất workbook
-   cùng sheet `Sent out`, tạo draft mail chưa gửi dưới dạng `.eml` hoặc Reply-All
-   trực tiếp trong Outlook qua Graph, và tạo/ghép PDF.
+   cùng sheet `Sent out`, tạo draft mail chưa gửi dưới dạng `.eml`, Reply-All
+   trực tiếp qua Graph, hoặc Reply-All trên chính mail nguồn qua Add-in/Local
+   Bridge không dùng Graph; và tạo/ghép PDF.
 6. Lưu workflow/audit trong SQLite; file nguồn và output không phải database.
 
 Kiến trúc hiện tại:
@@ -39,6 +40,7 @@ flowchart LR
     SVC --> PARSER["EML and Supplier parsers"]
     SVC --> FILES["Excel, EML draft and PDF adapters"]
     SVC --> M365["Optional Microsoft Graph\nexact-folder sync + Outlook draft"]
+    SVC --> COMPANION["Optional no-Graph companions\nOffice.js Add-in + Classic Outlook COM"]
     FILES --> WORD["Microsoft Word on Windows"]
     FILES --> WEASY["WeasyPrint on Linux/Render"]
 ```
@@ -50,7 +52,8 @@ Snapshot này được lập ngày **2026-08-15**:
 | Hạng mục | Giá trị tại snapshot |
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
-| Branch tích hợp | `agent/react-trannnb-team-dev` |
+| Branch tích hợp M365 lịch sử | `agent/react-trannnb-team-dev` |
+| Branch Outlook companion đang hoàn thiện | `feat/outlook-addin-local-bridge` |
 | Commit feature template/Draft Mail | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
 | Commit feature M365/Tran performance | `a69978f2ad6db0d399c6ce815449cd54c7502a98` |
 | Commit đã CI và đang live trên Render | `cfa1dd05bf9209939b3dddda5e04efe5e4859253` |
@@ -67,6 +70,13 @@ Snapshot này được lập ngày **2026-08-15**:
 | QA Windows current candidate | 326 pass, 2 skip theo capability/privilege môi trường; 84% coverage |
 | Frontend current candidate | Vite build ổn định, 48 modules |
 | Release verdict | Đủ điều kiện staging sau UAT; chưa phải production multi-user |
+
+Feature Outlook companion đang được hoàn thiện trên branch
+`feat/outlook-addin-local-bridge`: Office.js Add-in, Classic Outlook Local Bridge,
+pairing API, Tran draft package và hướng dẫn/download ngay trong Product. Tại thời
+điểm viết phần này, feature chưa có final commit/CI/deploy evidence nên **không
+được suy ra là đã live trên Render**. Root agent phải thay ghi chú này bằng exact
+SHA, PR, test gate và deploy status sau khi thật sự hoàn tất; không được bịa số.
 
 > **Release candidate M365/Tran performance đã được push lên branch
 > `agent/react-trannnb-team-dev` tại commit `a69978f`.** Local final gate: Ruff
@@ -166,6 +176,10 @@ không yêu cầu.
 - Không chọn Supplier/reference bằng glob “file đầu tiên”.
 - Không scan mọi Outlook mailbox: mỗi role OAuth riêng chỉ sync đúng một folder
   đã chọn. Không request `Mail.Send`, không có Graph `/send` và không tự gửi mail.
+- No-Graph Add-in chỉ lấy mail đang mở sau click; Local Bridge chỉ đọc hai exact
+  folder do operator chọn trong interactive Classic Outlook. Cả hai chỉ mở
+  Reply-All chưa gửi, không có send operation và không được biến thành service
+  quét mailbox toàn cục.
 - Không chèn raw HTML vào mail.
 - PDF overflow mặc định fail; chỉ cắt khi user chọn rõ `warn`, và phải trả warning.
 - Dữ liệu thiếu/không rõ trả `NEEDS_REVIEW`; không đoán physical, lookup, cost,
@@ -178,8 +192,8 @@ không yêu cầu.
 
 | Vai trò | Công việc chính |
 | --- | --- |
-| NganTLT/accounting operator | Nạp Supplier + email bằng upload hoặc mailbox OAuth riêng (`Mail.Read`), review case, tạo batch hạch toán, tải workbook, tạo/ghép PDF chứng từ |
-| TranNNB/compensation operator | Nạp email bằng upload hoặc mailbox OAuth riêng (`Mail.ReadWrite`), nạp FA&GL/CCDC, xác minh classification, tính đền bù, xuất workbook/`Sent out`, tạo draft `.eml`/Outlook và PDF |
+| NganTLT/accounting operator | Nạp Supplier + email bằng upload, mailbox OAuth riêng (`Mail.Read`), Add-in từng mail hoặc Local Bridge exact folder; review case, tạo batch hạch toán, tải workbook, tạo/ghép PDF chứng từ |
+| TranNNB/compensation operator | Nạp email bằng upload, mailbox OAuth riêng (`Mail.ReadWrite`), Add-in hoặc Local Bridge; nạp FA&GL/CCDC, xác minh classification, tính đền bù, xuất workbook/`Sent out`, tạo draft `.eml`/Graph/companion và PDF |
 | Reviewer | Xử lý cảnh báo, chuyển trạng thái, kiểm tra audit và output |
 | Team developer/tester | Chạy local/devcontainer/Compose hoặc staging bằng fixture synthetic |
 | Hackathon judge | Xem dashboard staging qua Basic Auth; không có quyền riêng theo vai trò trong MVP |
@@ -191,6 +205,7 @@ flowchart TD
     SUP["Upload Supplier Active + Inactive"] --> DIR["Validate, normalize, exclude collisions, atomic activate"]
     EML["Upload 1-20 EML"] --> PARSE["Validate MIME and parse_many"]
     M365["Ngan OAuth Mail.Read\nselect one folder + sync created mail"] --> PARSE
+    COMP["Add-in one open mail or\nLocal Bridge exact Ngan folder"] --> PARSE
     DIR --> ENRICH["Supplier enrichment"]
     PARSE --> ENRICH
     ENRICH --> CASES["SQLite cases + warnings + audit"]
@@ -205,8 +220,9 @@ flowchart TD
 Thứ tự vận hành:
 
 1. Upload đúng một file Active và một file Inactive.
-2. Upload `.eml`, hoặc kết nối account Ngan Microsoft 365 và chọn đúng một folder
-   rồi sync. Một EML có thể sinh nhiều case; các case cùng email dùng chung opaque
+2. Upload `.eml`, kết nối account Ngan Microsoft 365 và sync đúng một folder,
+   hoặc dùng Add-in/Local Bridge no-Graph. Một EML có thể sinh nhiều case; các
+   case cùng email dùng chung opaque
    retained handle khi retention bật. Sync Graph vẫn chạy qua validator/parser/
    Supplier enrichment hiện có; không có parser riêng dễ lệch rule.
 3. Review warnings và dữ liệu case. UI chỉ cho transition theo policy backend.
@@ -222,7 +238,7 @@ Thứ tự vận hành:
 
 ```mermaid
 flowchart TD
-    EML["Upload EML or sync exact Tran folder\nand retain source"] --> ASSETS["One or many LOST assets from same mail"]
+    EML["Upload EML, sync exact Tran folder,\nor no-Graph companion; retain source"] --> ASSETS["One or many LOST assets from same mail"]
     REF["Upload FA&GL + optional CCDC"] --> INDEX["Safe workbook indexes"]
     ASSETS --> RESOLVE["TranWorkflowService.resolve_many"]
     INDEX --> RESOLVE
@@ -231,13 +247,15 @@ flowchart TD
     CALC --> WB["New Tran workbook + Sent out"]
     WB --> DRAFT["Unsent reply-all .eml draft"]
     WB --> ODRAFT["Optional Graph createReplyAll\nattach workbook; never send"]
+    WB --> CDRAFT["Optional Add-in/Local Bridge package\nopen exact-source Reply-All; never send"]
     EML --> PDF["Individual/batch PDF evidence"]
 ```
 
 Chi tiết:
 
-1. Upload EML ở phân hệ TranNNB, hoặc kết nối account Tran Microsoft 365 và sync
-   đúng một folder. UI chọn một mail nguồn sẽ tự nhóm các case có cùng retained
+1. Upload EML ở phân hệ TranNNB, kết nối account Tran Microsoft 365 và sync đúng
+   một folder, hoặc nạp mail bằng Add-in/Local Bridge no-Graph. UI chọn một mail
+   nguồn sẽ tự nhóm các case có cùng retained
    EML và bung từng `metadata.asset_rows` thành danh sách 1–100 tài sản. Một case
    LOST cùng domain có thể đại diện nhiều dòng tài sản, không được coi một case
    luôn tương đương một tài sản.
@@ -271,6 +289,11 @@ Chi tiết:
    nhưng composite không được trùng. Server đối chiếu Tag/Domain với đúng dòng
    nguồn, còn UI khóa hai field này; case `ACCOUNTED/CLOSED` không được tạo output
    draft mới.
+9. Khi dùng companion, operator chọn **Đưa draft sang Add-in / Bridge**. Server
+   tạo cùng workbook + escaped Tran HTML, đăng ký package 30 phút theo exact
+   retained handle. Add-in chỉ mở package khi đúng Outlook item hiện tại; Local
+   Bridge chỉ mở khi handle còn map tới exact `EntryID + StoreID` trong RAM. Cả
+   hai chỉ mở Reply-All chưa gửi.
 
 ### 4.4 Hợp đồng Microsoft 365 chung cho hai vai trò
 
@@ -298,6 +321,54 @@ Chi tiết:
 - Disconnect xóa state local của đúng role, không revoke Entra consent. Authorized
   test reset xóa **mọi** M365 session/cursor in-memory cùng dữ liệu staging.
 - Chi tiết Entra/Render/API/error/safety ở `docs/MICROSOFT_365.md`.
+
+### 4.5 Hợp đồng Outlook companion không dùng Graph
+
+Hai phương án mới là interactive companion, không phải background mailbox
+integration và không thay Graph flow khi Entra sau này được cấp quyền:
+
+| Phương án | Cách hiểu đơn giản | Phù hợp | Giới hạn chính |
+| --- | --- | --- | --- |
+| Office.js Add-in | Mở một mail rồi bấm đưa đúng mail đó vào Product; Tran nhận package và mở Reply-All trên item đang mở | Ít mail; New/Web/Classic Outlook có Mailbox 1.14/1.15 và tenant cho sideload | Không scan folder; full EML ≤2 MiB và attachment bị common validator reject; body draft Add-in ≤32 KiB |
+| Classic Outlook Local Bridge | Chọn một exact folder Ngan và một exact folder Tran; Bridge chở bounded mail body sang Product và giữ map tới mail gốc để mở Reply-All | Nhiều mail; hai folder/mailbox trong cùng Windows Outlook profile | Windows + Classic Outlook + Python 3.11; interactive only; không recurse; max 20 mail/lượt; không chuyển attachment |
+
+Luồng chung:
+
+1. Dashboard dưới Basic Auth tạo code bind đúng `role` + `client_type`; code
+   one-time 5 phút.
+2. Client exchange code lấy bearer token absolute 8 giờ. Raw code/token không
+   được server persist; chỉ HMAC digest với per-process pepper ở RAM.
+3. Client upload đúng một EML qua validator/retention/ingestion chung. Ngan và
+   Tran có code/session riêng; Ngan chỉ ingest, draft queue là Tran-only.
+4. Tran tạo package từ row-level source-bound resolve: escaped body + managed
+   workbook, TTL 30 phút. Package chỉ hiện cho Tran session đã ghi nhận exact
+   retained handle. Tạo lại trên cùng handle atomically supersede package cũ;
+   hàng chờ chỉ giữ draft mới nhất của mail đó.
+5. Add-in match handle với current Outlook item trong `sessionStorage`; Bridge
+   match handle với `EntryID + StoreID` chỉ ở RAM. Mismatch/missing dừng, không
+   fuzzy-search. Nếu hai Outlook item map tới cùng content handle, cả Add-in
+   và Bridge đều coi là mơ hồ và fail closed.
+6. Client mở Reply-All + workbook để operator review. Không có send endpoint,
+   Graph `Mail.Send` hay COM/Office.js send operation.
+
+Add-in manifest và Bridge ZIP được tải ngay trong panel hướng dẫn của cả workspace:
+
+- `/api/companion/downloads/outlook-addin-manifest.xml`;
+- `/api/companion/downloads/local-bridge.zip`.
+
+Task pane public chỉ chứa static code; mọi dữ liệu/API vẫn cần pairing bearer.
+Server restart/redeploy/test clear invalidates code/token/package. Add-in giữ
+token/item map trong task-pane `sessionStorage`; Bridge giữ token/folder/
+checkpoint/source map trong process RAM, nên đóng client phải ghép/chọn/nạp lại.
+Local Bridge chỉ xét cửa sổ 30 ngày, inspect tối đa 500 item ngay trong exact
+folder và lấy 20 mail cũ nhất chưa xử lý mỗi lượt. Bấm tiếp sẽ drain backlog theo
+thứ tự cũ → mới, không nhảy qua phần còn lại. Auto-check 5 phút mặc định off và
+chỉ chạy khi GUI mở.
+
+Hai phương án không cần Graph App Registration/admin consent, nhưng policy tổ
+chức vẫn có thể chặn custom add-in hoặc Outlook COM. Không hướng dẫn tắt chính
+sách bảo mật. Hướng dẫn child-simple, route contract, TTL/bounds, threat boundary,
+install, troubleshooting và QA đầy đủ ở `docs/OUTLOOK_COMPANIONS.md`.
 
 ## 5. Kiến trúc và bản đồ source
 
@@ -331,6 +402,7 @@ Chi tiết:
 | `src/asset_compensation/services/tran_reference_upload_service.py` | Safe FA&GL/CCDC version upload/activation + bounded generation-consistent index cache |
 | `src/asset_compensation/services/m365_auth_service.py` | Role/session-isolated MSAL cache, OAuth, folder selection và bounded delta collection |
 | `src/asset_compensation/services/m365_mail_service.py` | Graph MIME → existing ingestion pipeline; Outlook Reply-All draft orchestration/rollback |
+| `src/asset_compensation/services/companion_service.py` | In-memory one-time pairing, hashed bearer sessions, exact-source handle binding và 30-minute Tran package queue |
 | `src/asset_compensation/services/mail_artifact_service.py` | Optional content-addressed EML retention |
 | `src/asset_compensation/services/mail_pdf_service.py` | Atomic individual/batch PDF orchestration |
 | `src/asset_compensation/services/test_data_service.py` | Scoped disposable staging cleanup |
@@ -343,6 +415,8 @@ Chi tiết:
 | `src/asset_compensation/adapters/tran_mail.py` | Escaped HTML table and unsent EML draft |
 | `src/asset_compensation/adapters/m365_contract.py` | Shared Graph/Outlook body hard limits |
 | `src/asset_compensation/adapters/m365_graph.py` | Strict allowlisted Graph HTTP boundary; không generic request/send method |
+| `src/asset_compensation/integrations/outlook_addin/` | Office.js manifest/task pane; upload current item + exact-handle Reply-All, no Graph/send |
+| `src/asset_compensation/integrations/local_bridge/` | Downloadable Windows GUI + pure HTTP/EML helpers + narrow interactive Classic Outlook COM adapter |
 | `src/asset_compensation/adapters/pdf.py` | EML sanitizer, Word/Weasy converters, pypdf normalization/merge |
 | `src/asset_compensation/repositories/sqlite_repository.py` | Schema, WAL, transactions, immutable accounted cases |
 | `src/asset_compensation/web/app.py` | Flask app factory, auth, headers, dependency wiring |
@@ -355,12 +429,14 @@ Chi tiết:
 | `frontend/src/components/TaskWorkspace.jsx` | NganTLT accounting and PDF workspace |
 | `frontend/src/components/TranWorkspace.jsx` | Multi-asset Tran reference/resolve/export/draft UI |
 | `frontend/src/components/M365MailboxPanel.jsx` | Role account/folder/manual sync + visible-tab 5-minute opt-in auto-sync |
+| `frontend/src/components/OutlookCompanionPanel.jsx` | Child-simple Add-in/Bridge comparison, runtime downloads và role/client pairing code UI |
 | `frontend/src/components/MailPdfPanel.jsx` | Artifact selection and individual/batch PDF UI |
 | `frontend/src/components/CaseTable.jsx` | Filtered case table and selection |
 | `frontend/src/components/CaseDrawer.jsx` | Detail, metadata and status audit timeline |
 | `frontend/src/components/BatchDialog.jsx` | Batch validation, actor, invoice start |
 | `src/asset_compensation/templates/*.xlsx` | Accounting template synthetic sạch và Tran template giữ layout/style gốc nhưng đã loại toàn bộ dữ liệu vận hành |
 | `src/asset_compensation/web/static/dist/` | Generated Vite bundle served by Flask |
+| `docs/OUTLOOK_COMPANIONS.md` | User guide + exact companion API/security/retention/QA handoff |
 
 ## 6. Domain model, trạng thái và persistence
 
@@ -444,6 +520,12 @@ workspace cha, inbox bên ngoài, template external hoặc file lạ.
 Microsoft 365 token cache/folder/delta cursor **không nằm trong layout này** và
 không persist vào SQLite/file/cookie. Cookie chỉ chứa opaque 43-character session
 ID; state/tokens/cursors ở memory và bị drop khi process restart hoặc test clear.
+
+Companion pairing code/token/package queue cũng không nằm trong layout này:
+server chỉ giữ HMAC digest + role/client/source bindings trong process RAM. Raw
+token ở Add-in `sessionStorage` hoặc Local Bridge RAM. Package pointer hết sau 30
+phút nhưng workbook/retained EML đã generate vẫn đi theo managed-output retention
+hiện có; chưa có automatic TTL deletion.
 
 ## 7. Business rules chi tiết
 
@@ -634,10 +716,13 @@ Bounds/API:
 
 ## 8. API HTTP đầy đủ
 
-Mặc định mọi route trừ `/api/health` đi qua shared Basic Auth nếu hai biến access
-được cấu hình. Upload dùng thêm custom header để chống cross-site form dùng
-browser-cached Basic Auth. Error business trả JSON; capability không có trả 503
-với `capability_available:false`.
+Mặc định route đi qua shared Basic Auth nếu hai biến access được cấu hình. Các
+ngoại lệ hẹp là `/api/health`, M365 callback, chín exact secret-free task-pane/
+icon
+assets, one-time companion exchange và exact bearer-authenticated companion
+client routes. Không dùng broad prefix exception. Upload dùng thêm custom header
+để chống cross-site form dùng browser-cached Basic Auth. Error business trả JSON;
+capability không có trả 503 với `capability_available:false`.
 
 | Method | Route | Mục đích/contract ngắn |
 | --- | --- | --- |
@@ -651,6 +736,15 @@ với `capability_available:false`.
 | POST | `/api/compensation/preview` | Pure preview cho 1–100 assets; không persist |
 | POST | `/api/demo/reset` | Reset synthetic demo, chỉ khi demo mode bật |
 | POST | `/api/test-data/clear` | Guarded disposable cleanup với exact header/body |
+| GET | `/api/companion/downloads/outlook-addin-manifest.xml` | Basic-protected runtime-rendered same-origin Add-in manifest |
+| GET | `/api/companion/downloads/local-bridge.zip` | Basic-protected allowlisted six-file Bridge ZIP with runtime origin |
+| GET | `/outlook-addin/taskpane.html`, `/outlook-addin/taskpane.css`, `/outlook-addin/taskpane.js`, `/outlook-addin/logo.png` | Bốn public secret-free assets; CSP/Office frame exception chỉ cho exact allowlist |
+| POST | `/api/companion/pairings` | Basic + `companion-pair-v1`; exact role/client; one-time 5-minute code |
+| POST | `/api/companion/exchange` | Exchange one-time code for role/client-bound 8-hour bearer; no Basic dependency |
+| POST | `/api/companion/client/emails` | Bearer + `companion-email-v1`; exactly one EML through common retention/ingestion |
+| GET | `/api/companion/client/draft-packages` | Bearer Tran-only list; exact uploaded retained handle boundary |
+| GET | `/api/companion/client/draft-packages/<package_id>` | Bearer Tran-only body + Base64 managed workbook; package 30 minutes |
+| POST | `/api/companion/client/draft-packages/<package_id>/ack` | Bearer Tran + `companion-ack-v1` + `{}`; acknowledge opened, never imply sent |
 | GET | `/api/suppliers/status` | Active normalized Supplier version/status |
 | POST | `/api/suppliers/upload` | Multipart Active + Inactive; header `supplier-v1` |
 | POST | `/api/emails/upload` | Multipart repeated `files`; header `email-v1`; ingest ngay |
@@ -668,6 +762,7 @@ với `capability_available:false`.
 | POST | `/api/tran/workbooks` | Export new Tran workbook; returns opaque output ID |
 | GET | `/api/tran/workbooks/<output_id>/download` | Private/no-store workbook download |
 | POST | `/api/tran/drafts` | Export workbook + unsent Reply-All `.eml`; bind từng asset bằng `{case_id, source_row_index}` với retained handle |
+| POST | `/api/tran/companion-drafts` | Export workbook + escaped body to exact-source Add-in/Bridge package; never send |
 | POST | `/api/tran/outlook-drafts` | Export workbook + create unsent Outlook Graph Reply-All draft; cùng row-level binding; never send |
 | GET | `/api/tran/drafts/<output_id>/download` | Private/no-store draft download |
 | GET | `/api/mail-artifacts/<handle>/download` | Verified retained EML download |
@@ -697,6 +792,8 @@ Payload quan trọng được định nghĩa chi tiết ở:
 - `docs/TRAN_API.md` — capabilities, reference/resolve/workbook/draft/PDF;
 - `docs/MICROSOFT_365.md` — Entra OAuth, permissions, folder sync, Outlook draft,
   error/limit/security contract;
+- `docs/OUTLOOK_COMPANIONS.md` — Add-in/Bridge install, downloads, pairing API,
+  exact-source draft, bounds, security and troubleshooting;
 - `docs/COMPENSATION_PREVIEW_API.md` — preview request/result/status;
 - `docs/MAIL_ARTIFACTS_AND_PDF.md` — low-level retention/render/merge contract.
 
@@ -712,6 +809,14 @@ mới), `case_ids` (case trả về, có thể gồm duplicate đã tồn tại)
 `cursor_ready` và ba count data-minimized: `unavailable_count`,
 `oversized_count`, `invalid_mime_count`. Không đưa Graph ID/folder/subject/
 provider body của item bị skip ra client.
+
+Companion capability flags là `companion_pairing`, `outlook_addin`,
+`local_bridge` và `tran_companion_draft`. Ba flag đầu phản ánh bundled clients;
+Tran companion draft còn cần raw EML retention + Tran template. Pairing code
+one-time 5 phút; token absolute 8 giờ; package 30 phút. Ngan/Tran và
+`outlook_addin`/`local_bridge` bind riêng, nhưng chỉ Tran được đọc draft queue.
+Companion client routes dùng exact bearer allowlist; không dùng broad prefix để
+future route vô tình bypass Basic Auth. Mọi companion response là private/no-store.
 
 Không thêm endpoint gửi email. Không trả server filesystem path cho client. ID
 download phải opaque và path phải được resolve dưới managed root.
@@ -747,6 +852,9 @@ download phải opaque và path phải được resolve dưới managed root.
   workbook/local draft/Outlook draft actions.
 - `M365MailboxPanel.jsx`: reusable Ngan/Tran account status, Connect/Disconnect,
   exact-folder selection, manual sync, 5-minute visible-tab auto-sync opt-in.
+- `OutlookCompanionPanel.jsx`: render trong cả Ngan/Tran workspace; giải thích
+  child-simple “dùng cách này thì chuyện gì xảy ra”, so sánh Add-in/Bridge, link
+  runtime download và tạo code bind đúng role/client.
 - `MailPdfPanel.jsx`: dedupe artifact handles, select max 20, page/overflow mode,
   individual/batch progress, warnings/downloads.
 - `BatchDialog.jsx`: batch/actor/`invoice_start` input and transition-safe UX.
@@ -763,6 +871,12 @@ role, không lưu account/token/folder/PII. Interval không chạy khi tab hidde
 không overlap request. 401/503, disconnect hoặc test reset tắt opt-in. Frontend
 chỉ redirect OAuth tới exact HTTPS `login.microsoftonline.com` và chỉ mở web link
 draft ở allowlist Outlook HTTPS; API request dùng same-origin credentials.
+
+Companion panel không giữ bearer token; nó chỉ hiển thị pairing code one-time do
+dashboard Basic-authenticated tạo. Add-in/Bridge tự exchange code. Link download
+phải là relative same-origin route, để manifest/ZIP được render đúng server đang
+dùng. Tran workspace có action riêng **Đưa draft sang Add-in / Bridge** cạnh các
+flow `.eml`/Graph; action trả package waiting state, không tuyên bố mail đã gửi.
 
 ## 10. Output templates và file formats
 
@@ -891,6 +1005,7 @@ Render/GreenNode dashboard. `.env.example` là reference synthetic.
 | `ASSET_HUB_M365_CLIENT_ID` | unset | Entra confidential Web app client GUID |
 | `ASSET_HUB_M365_CLIENT_SECRET` | unset | Secret runtime-only, bị ẩn khỏi settings repr; không log/commit |
 | `ASSET_HUB_M365_REDIRECT_URI` | unset | Exact `/api/m365/callback`; HTTPS cloud hoặc HTTP loopback local |
+| `ASSET_HUB_PUBLIC_ORIGIN` | `RENDER_EXTERNAL_URL` fallback, rồi unset | Exact trusted origin nhúng vào Add-in manifest/Bridge ZIP; remote phải HTTPS, no path/query/credential/custom port; localhost HTTP chỉ được phép cho Bridge |
 | `PORT` | platform/10000 Docker fallback | Gunicorn bind port trên Render/container |
 | `GUNICORN_THREADS` | deployment-specific | 2 trên Free staging, 4 trên paid/GreenNode sample |
 | `GUNICORN_TIMEOUT` | `120` deploy sample | Synchronous export timeout |
@@ -904,6 +1019,17 @@ M365 chỉ configured khi **đủ và hợp lệ cả bốn biến** cùng depen
 tenant/client/client-secret bằng `sync:false`. Entra app phải đăng ký delegated
 `Mail.Read` + `Mail.ReadWrite`, không thêm `Mail.Send`; runtime sẽ request scope
 nhỏ hơn theo role. Xem setup từng bước ở `docs/MICROSOFT_365.md`.
+
+Outlook companions không thêm secret và không phụ thuộc bốn biến M365, nhưng
+remote server phải cấu hình `ASSET_HUB_PUBLIC_ORIGIN` (Render có thể fallback
+`RENDER_EXTERNAL_URL`). Value đi qua strict canonicalization: remote chỉ exact
+HTTPS origin, không credential/path/query/fragment/custom port. Riêng Bridge local
+có thể dùng loopback HTTP; Add-in manifest luôn bắt buộc HTTPS. Localhost có thể
+để trống và fallback exact request host HTTP cho Bridge. Việc này chặn Host-header poisoning
+khi runtime render manifest/ZIP. Companions còn cần
+`ASSET_HUB_RETAIN_RAW_EML=true`; Tran package cần Tran template available. Local
+Bridge ZIP cài `requests` + `pywin32` trên Windows client, không trong Render
+process.
 
 ## 12. Security, privacy và deletion boundaries
 
@@ -951,6 +1077,20 @@ nhỏ hơn theo role. Xem setup từng bước ở `docs/MICROSOFT_365.md`.
   `source_bindings`; mỗi composite `(case_id, source_row_index)` phải duy nhất,
   LOST, chưa `ACCOUNTED/CLOSED`, cùng retained handle và Tag/Domain phải khớp
   dữ liệu nguồn phía server.
+- Companion pairing creation vẫn sau Basic Auth + exact action header. Exchange
+  chỉ nhận one-time code; exact bearer route allowlist tránh future path vô tình
+  public. Code 5 phút, token 8 giờ và package 30 phút đều bounded/in-memory;
+  server giữ HMAC digest với per-process pepper, không giữ raw code/token.
+- Pairing bind role + client type; source handle bind package. Ngan không có
+  draft access. Add-in match current item trong `sessionStorage`; Bridge match
+  exact `EntryID + StoreID` trong RAM. Token chỉ đi Bearer header, không URL.
+- Add-in manifest chỉ xin `ReadItem`; task pane static public không chứa secret,
+  chỉ load official Office.js + same-origin assets. Bridge ZIP có exact six-file
+  allowlist và runtime-fixed origin; COM adapter interactive only, không
+  read/move/delete flag, attachment scan hoặc Send member.
+- Companion upload dùng cùng strict EML validator/retention/ingestion. Draft body
+  và workbook bị validate/escape ở server và client; workbook chỉ từ exact
+  managed output path, `.xlsx/.xlsm`, tối đa 25 MiB.
 
 ### 12.2 Điều chưa phải production security
 
@@ -961,6 +1101,13 @@ nhỏ hơn theo role. Xem setup từng bước ở `docs/MICROSOFT_365.md`.
 - M365 token/folder/cursor memory-only không phù hợp multi-worker/instance, không
   survive restart và chưa có encrypted persistence, server background worker,
   webhook subscription lifecycle hoặc account-level revocation UI.
+- Companion cũng staging-grade: không có exchange rate limiter, SSO/RBAC/per-user
+  audit, server-side immediate token revoke, signed installer/auto-update,
+  encrypted durable multi-worker state hoặc formal package retention. Disconnect
+  client chỉ xóa token local; server digest tự hết hạn/restart/reset.
+- Local Bridge chỉ Windows + Classic Outlook trong interactive desktop session;
+  Object Model Guard/policy có thể chặn. Add-in cần tenant cho custom sideload và
+  Mailbox 1.14/1.15. Hai cách không phải unattended background ingestion.
 - Chưa có managed object storage, retention policy theo ngày, KMS, formal backup,
   antivirus/DLP pipeline hoặc SIEM.
 - Hackathon staging chỉ dùng fixture synthetic/đã ẩn danh. Ephemeral filesystem
@@ -978,6 +1125,12 @@ orphan/unknown file hoặc workspace cha. Mutation lock serialize nó với expo
 Nó cũng drop toàn bộ M365 session/token cache/folder/delta cursor đang ở memory;
 mọi tester phải reconnect sau reset. Disconnect một role chỉ drop state role đó
 và không revoke consent đã cấp trong Entra.
+
+Clear còn drop mọi companion pairing/session/package. Add-in/Bridge đang mở sẽ
+nhận 401 và phải lấy code mới; mọi retained-handle mapping local trở nên vô dụng.
+Package pointer clear/expiry không phải send status. Managed workbook/EML được
+xóa theo các bước output/artifact hiện có của test clear, không do companion
+service tự recurse filesystem.
 
 DB và nhiều filesystem store không thể nằm trong một transaction duy nhất; clear
 gọi các bước theo thứ tự và có thể dừng giữa chừng nếu I/O lỗi. Đây là trade-off
@@ -1067,6 +1220,14 @@ managed DB và object storage trước.
 - Docker gồm React build, Flask/Gunicorn, WeasyPrint 68, pypdf, Pango, DejaVu,
   MSAL và Requests.
 
+Companion build bundle Office.js static assets và Local Bridge text package
+trong Python wheel/container; server download route render exact staging HTTPS
+origin vào XML/ZIP ở request time. Không cần thêm Entra env. Raw EML retention
+đã bật trên disposable staging nên companion upload/package capability có thể
+sẵn sàng sau khi code tương ứng thật sự được deploy. Download route ở sau Basic
+Auth; task pane static phải public có chủ đích vì Outlook không mang shared Basic
+credential, nhưng nó không chứa secret và mọi data API vẫn cần pairing bearer.
+
 Blueprint hiện khai báo callback
 `https://asset-compensation-hub-staging.onrender.com/api/m365/callback` cùng ba
 M365 secret env `sync:false`. Trước khi bật, operator phải tạo tenant-specific
@@ -1083,6 +1244,12 @@ bug persistence. Không upload dữ liệu thật.
 Release candidate M365/performance được mô tả trong file này **chưa live** tại
 snapshot tài liệu. Không Manual Deploy chỉ vì đã push branch; user phải xác nhận
 lại việc mất dữ liệu staging ngay trước mỗi rebuild/deploy mới.
+
+Outlook companion candidate trên `feat/outlook-addin-local-bridge` cũng **chưa
+được coi là live** chỉ vì source/docs xuất hiện trong working tree. Sau final
+commit/CI, redeploy vẫn cần user xác nhận mới vì `/tmp` sẽ mất. Hậu deploy phải
+smoke cả hai authenticated download, chín public task-pane/icon assets, pairing/upload,
+Tran package và no-send behavior bằng fixture synthetic.
 
 Hậu deploy tối thiểu:
 
@@ -1161,6 +1328,24 @@ pnpm --dir frontend build
 git diff --check
 ```
 
+Targeted companion gate trước full suite:
+
+```powershell
+pytest -q tests/test_companion_service.py `
+  tests/test_companion_routes.py `
+  tests/test_companion_downloads.py `
+  tests/test_outlook_addin_assets.py `
+  tests/test_local_bridge_assets.py
+node --check src/asset_compensation/integrations/outlook_addin/taskpane.js
+```
+
+Targeted tests phải chứng minh one-time/expiry/hash-only store, exact auth
+allowlist, Ngan/Tran + client-type binding, source-bound package/ack/reset,
+manifest `ReadItem`/Mailbox 1.14+1.15/no-send, allowlisted ZIP, minimized EML,
+bounded scan, safe workbook/body và COM `ReplyAll`/`Save`/`Display` without Send.
+Sau đó vẫn chạy full release gate; không ghi test count/SHA nếu chưa chạy exact
+commit.
+
 Nếu thay Docker/deploy:
 
 ```powershell
@@ -1172,6 +1357,12 @@ docker compose --env-file .env.greennode.example `
 Nếu thay UI: chạy browser smoke ở desktop width, kiểm VI/EN, Ngan/Tran, progress,
 error, responsive và console. Nếu thay workbook/PDF: mở artifact thật bằng parser
 độc lập (`openpyxl`/`pypdf`) và visual-render khi layout quan trọng.
+
+Companion UAT cần cả Outlook client thật: sideload runtime XML rồi test current
+mail upload + exact-mail Reply-All; trên Windows Classic Outlook cài ZIP, pair
+hai role, chọn hai synthetic folders, xác nhận chỉ Tran poll draft, mail không bị
+read/move/delete, attachment nguồn không upload, exact source mở workbook draft
+chưa gửi. Không dùng mailbox/PII vận hành và không bấm Send.
 
 ### 15.2 CI
 
@@ -1241,9 +1432,55 @@ Regression mới của working tree bao phủ:
 - CCDC parser không random-access `ReadOnlyWorksheet.cell()`, managed cache prime/
   invalidation, row/record/text ceiling, stable external stat cache, mixed-pair
   rejection và concurrent single-flight cache miss.
+- Companion candidate tests kiểm one-time/expired code, hash-only bounded store,
+  8-hour role/client bearer, exact Basic/Bearer allowlist, source-bound Tran-only
+  30-minute package/ack/reset và no-store errors.
+- Distribution tests kiểm strict `ASSET_HUB_PUBLIC_ORIGIN`, Host-header rejection,
+  deterministic six-file ZIP/no placeholder/secret, Basic-protected downloads và
+  chín exact public task-pane/icon assets có scoped Office CSP/frame policy.
+- Add-in tests kiểm `ReadItem`, Mailbox 1.14/1.15, official Office.js, current-item
+  EML, `sessionStorage`, exact handle, bounded body/workbook/Base64 và không send.
+  Bridge tests kiểm minimized no-attachment EML, 30-day/20-mail repeat-to-drain,
+  two-role pairing nhưng Tran-only draft poll, safe body/workbook, exact COM
+  `ReplyAll`/`Save`/`Display` và AST không có Send member.
 
 Synthetic 600-row CCDC hotspot benchmark trên máy dev: 20.417 s → 0.073 s
 (~280×). Ghi rõ đây là microbenchmark synthetic, không phải SLA/UAT production.
+
+**Outlook companion release-candidate evidence (local, 15/08/2026):**
+
+- branch `feat/outlook-addin-local-bridge`, implementation commit
+  `c7f1072cd714272264d58f3f79bafc06df1eca22`; Draft PR
+  [#7](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/7)
+  target `main` và chưa merge;
+- GitHub CI cho implementation commit pass ở cả push run
+  [31884459840](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/actions/runs/31884459840)
+  và PR run
+  [31884479473](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/actions/runs/31884479473);
+- chưa deploy Render, nên tính năng companion **not live** tại snapshot này;
+- focused companion/Add-in/Bridge gate: 40 passed;
+- full pytest: 368 collected = 366 passed + 2 expected platform skips;
+- Ruff toàn repo và `git diff --check` pass (chỉ có cảnh báo LF→CRLF của Git);
+- Vite 5.4.14 production build: 49 modules; tracked `app.js`, `app.css` và
+  `index.html` khớp lần build lại, SHA-256 lần lượt
+  `7ECC78F31C6C1B7BF8463309F4D6B03216B60AD83F9C5C0F2D70443E4D8DDE6A`,
+  `45D8B66A88DBFA4153AB39FC3060015B7E7370C1C45C22974F92A9D6D124362D`,
+  `9FE98DF6ED074BFF52F664AD0C79010A9B2548B39579C74696816D9648FAF169`;
+- Microsoft `office-addin-manifest` validator pass cho rendered staging XML,
+  báo hỗ trợ Outlook Windows/Mac/Web; icon 16/32/64/80/128 đúng square;
+- wheel build pass và chứa đủ Add-in/Bridge assets; Bridge ZIP exact six-file,
+  deterministic và không còn placeholder/credential;
+- browser smoke local pass cho Ngan/Tran role-specific copy, hai download link,
+  layout không tràn ngang ở viewport 1280 px; không dùng dữ liệu vận hành;
+- một full-run trước lần pass cuối từng gặp Windows/antivirus `WinError 5` khi
+  `os.replace` thư mục test FA&GL; exact test pass ngay trên temp mới và full-run
+  fresh `C:\\t\\f815b` pass như số liệu trên. Đây là bằng chứng minh bạch về
+  flake môi trường, không bị ghi đè thành code pass giả.
+
+Không ghi “live” cho đến khi có fresh staging data-loss approval và verified
+deploy. Commit tài liệu bàn giao có thể nằm sau implementation commit nêu trên;
+luôn dùng `git rev-parse HEAD` và trạng thái PR/CI hiện tại thay vì giả định SHA
+trong tài liệu là HEAD bất biến.
 
 ### 15.4 Khoảng trống automation hiện tại
 
@@ -1280,14 +1517,17 @@ Function-by-function migration status nằm ở
 
 - parsing multi-record, Supplier enrichment, semantic accounting, batch,
   source EML, individual/batch PDF, Tran lookup/calculation/workbook/`Sent out`/
-  draft và optional exact-folder M365 ingestion/Outlook draft đều đã có tested
-  product equivalent;
+  draft, optional exact-folder M365 ingestion/Graph Outlook draft, và no-Graph
+  Add-in/Classic Outlook Bridge đều có product equivalent trong companion
+  candidate; final release status phải theo exact commit/test evidence;
 - unsafe dynamic imports, GET mutation, arbitrary/global mailbox scan, auto-send,
   silent truncation và arbitrary path download được retired;
-- COM Outlook `Display()` và send không được implement. Operator có thể mở draft
-  `.eml`; optional Graph path tạo Reply-All draft trong own mailbox từ exact
-  retained Message-ID và trả web link, nhưng vẫn không gửi. Word pixel-level
-  rendering là local Windows capability, không thể chạy trên Render Linux;
+- COM Outlook `Display()` nay được implement **chỉ trong downloadable Local
+  Bridge**: interactive Windows Classic Outlook, exact session-local
+  `EntryID + StoreID`, `ReplyAll()` + attach + `Save()` + `Display()`, không có
+  `Send()`. Add-in dùng Office.js current item + `displayReplyAllFormAsync`, cũng
+  không send. Graph path vẫn là tùy chọn riêng; Word pixel-level rendering là
+  local Windows capability, không thể chạy trên Render Linux;
 - exact operational GL/template/VBA và real CCDC certification là external/UAT,
   không phải nội dung public repo.
 
@@ -1335,8 +1575,13 @@ giới hạn/next step, không được quảng bá là đã production-ready:
    xác nhận Ngan chỉ `Mail.Read`, Tran `Mail.ReadWrite`, không `Mail.Send`, sync
    không mutate mail và Reply-All draft thực sự chưa gửi. Chỉ redeploy Render sau
    khi user chấp nhận mất dữ liệu staging một lần nữa.
+8. UAT companion candidate trên client thật: Add-in sideload/requirement-set ở
+   New/Web/Classic Outlook được team dùng; Local Bridge install qua proxy công ty,
+   pair hai role, exact two-folder bounded scan, Object Model Guard, Tran
+   exact-source Reply-All/workbook và no-send. Xác nhận backlog >20 được drain
+   20 mail/lượt theo thứ tự cũ → mới trong cửa sổ 30 ngày.
 
-### Chức năng trong specification nhưng chưa có end-to-end
+### Backlog chức năng chưa có end-to-end
 
 1. ZaloBOT webhook/notification; chưa có endpoint/credential/notification
    contract nên không được tự gửi hay giả lập.
@@ -1344,6 +1589,14 @@ giới hạn/next step, không được quảng bá là đã production-ready:
    filters và late highlighting. Domain hiện chỉ có năm status chung.
 3. Monthly Excel/CSV case report kèm lịch sử status. SQLite audit đã thay
    `case_log.xlsx` làm database, nhưng chưa có report export riêng.
+4. **External-forward mailbox option (chưa implement):** rule công ty forward/
+   copy mail báo mất/hư hỏng sang dedicated non-corporate mailbox để Product poll
+   và trả copyable draft. Không có route/UI/worker/credential hiện tại. External
+   forwarding có thể bị policy chặn và tạo unmanaged corporate-data copy; chỉ
+   thiết kế sau written IT/Security/Data Owner approval, provider/auth choice,
+   scope + retention/delete/audit contract, durable 24/7 cursor/worker,
+   idempotency/retry/monitoring. Không dùng password/app-password tự phát và
+   không quảng bá như feature hiện có.
 
 Các mục này phải được xem là backlog thật, không được quảng bá là DONE. Zalo và
 owner/SLA là mở rộng schema/integration đáng kể, cần user/product owner chốt
@@ -1362,12 +1615,20 @@ contract và quyền truy cập trước khi implement.
    revocation/rotation, per-user audit, worker hoặc Graph webhook/subscription
    renewal, multi-instance coordination và formal retention. Browser visible-tab
    5-minute timer hiện tại không phải background ingestion.
+8. Companion production hardening: exchange rate limit, SSO/RBAC ownership,
+   server-side revoke/audit, signed Add-in/Bridge release, installer/code signing,
+   automatic update, formal client support matrix, durable encrypted state nếu
+   thật sự cần multi-worker và retention/deletion SLA cho retained source/package.
 
 ### Intentional non-features
 
 - Không tự gửi email.
 - Không tự post journal vào ERP.
-- Không scan Outlook mailbox toàn cục; chỉ role account + exact selected folder.
+- Không scan Outlook mailbox toàn cục: Graph chỉ role account + exact selected
+  folder; Add-in chỉ current item; Bridge chỉ exact folder do operator chọn và
+  chỉ khi interactive GUI đang chạy.
+- Không tự forward/poll mailbox cá nhân bên ngoài tổ chức; phương án này chỉ là
+  backlog cần written approval và data-governance design.
 - Không ship operational data/GL/VBA.
 - Không bảo đảm Word và WeasyPrint pixel-identical.
 
@@ -1418,6 +1679,14 @@ rõ các giới hạn còn lại.
 | Sync không thấy mail | Kiểm đúng role account/tenant/exact folder; first sync chỉ 30 ngày, mỗi request 1 page/10 mail; `has_more=true` thì sync tiếp |
 | Outlook draft disabled | Tran M365 connected + retention + template + exact retained source Message-ID; workbook phải dưới 2.8 MB |
 | Outlook draft báo uncertainty | Kiểm Outlook Drafts trước khi retry; Graph có thể đã tạo draft nhưng rollback không xác nhận được |
+| Companion code invalid | Code one-time đã dùng/quá 5 phút/restart, hoặc sai role/client type; tạo code mới đúng card Ngan/Tran + Add-in/Bridge |
+| Companion upload disabled | Cần `ASSET_HUB_RETAIN_RAW_EML=true`; EML ≤2 MiB, không attachment; redeploy staging chỉ sau fresh data-loss confirmation |
+| Add-in không hiện | Cài runtime XML từ đúng Product, tenant cho custom sideload, Outlook Mailbox 1.14; restart/cache có thể chậm |
+| Add-in nạp được nhưng Reply-All disabled | Workbook attachment cần Mailbox 1.15; đúng current mail/source handle; package còn trong 30 phút; dùng Bridge nếu body >32 KiB |
+| Local Bridge không mở | Windows + Python 3.11 + Classic Outlook đã mở; chạy lại installer/pywin32; New Outlook không có COM |
+| Bridge không thấy mail | Chọn đúng exact folder; không recurse; cửa sổ 30 ngày, 20 mail cũ nhất chưa xử lý/lượt, inspect max 500; bấm tiếp để drain; state mất khi đóng |
+| Bridge không thấy Tran draft | Tran phải upload mail trong cùng Bridge session và tạo companion package; Ngan là ingest-only; package 30 phút |
+| Bridge không tìm mail gốc | Mail đã move/delete hoặc Bridge đã restart; exact `EntryID + StoreID` fail closed, không fuzzy-search |
 | Tran reference xử lý lại chậm | Xác nhận route dùng `TranReferenceUploadService.load_indices`; cache mất sau restart/clear/external stat change |
 | PDF disabled local Windows | Cài `.[windows]`, Word desktop; restart app |
 | PDF disabled Linux | Cài `.[pdf]` + Pango/font; Dockerfile production đã có |
@@ -1441,13 +1710,15 @@ rõ các giới hạn còn lại.
 9. `docs/TRAN_API.md` — Tran, retained EML và PDF HTTP API.
 10. `docs/MICROSOFT_365.md` — Entra/OAuth, two roles, exact-folder sync,
     Outlook draft, API/security/limits/deploy.
-11. `docs/MAIL_ARTIFACTS_AND_PDF.md` — renderer/storage low-level contract.
-12. `docs/COMPENSATION_PREVIEW_API.md` — pure preview API.
-13. `docs/TEAM_DEVELOPMENT.md` — onboarding Codex/Claude/devcontainer/Compose.
-14. `docs/RENDER_FREE_STAGING.md`, `docs/DEPLOYMENT.md`,
+11. `docs/OUTLOOK_COMPANIONS.md` — child-simple Add-in/Bridge choice/install,
+    exact downloads, pairing/package API, security/retention/troubleshooting/QA.
+12. `docs/MAIL_ARTIFACTS_AND_PDF.md` — renderer/storage low-level contract.
+13. `docs/COMPENSATION_PREVIEW_API.md` — pure preview API.
+14. `docs/TEAM_DEVELOPMENT.md` — onboarding Codex/Claude/devcontainer/Compose.
+15. `docs/RENDER_FREE_STAGING.md`, `docs/DEPLOYMENT.md`,
     `docs/GREENNODE_DEPLOYMENT.md` — deploy/runbook.
-15. `SECURITY.md` — data handling/threat boundaries.
-16. `docs/DEMO_SCRIPT.md` — hackathon walkthrough.
+16. `SECURITY.md` — data handling/threat boundaries.
+17. `docs/DEMO_SCRIPT.md` — hackathon walkthrough.
 
 ## 22. Prompt khởi động cho cuộc trò chuyện mới
 
@@ -1459,7 +1730,10 @@ Có thể dùng prompt ngắn sau:
 > gates, cập nhật `PROJECT_CONTEXT.md`, commit và push feature branch/draft PR.
 > Với M365, giữ hai role cache/scope độc lập, exact-folder only, không `Mail.Send`,
 > không biến browser timer thành lời hứa background. Không deploy Render nếu chưa
-> xin lại xác nhận mất dữ liệu staging.
+> xin lại xác nhận mất dữ liệu staging. Với Outlook companion, giữ code 5 phút,
+> token 8 giờ/package 30 phút memory-only, exact role/client/source binding,
+> Add-in current-item only, Bridge interactive exact-folder only, và tuyệt đối
+> không thêm send operation.
 
 ## 23. Cách duy trì file này
 

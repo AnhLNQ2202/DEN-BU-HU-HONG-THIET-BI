@@ -1198,6 +1198,134 @@ label.small {
   font-weight: 700;
 }
 
+.outlook-companion-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.companion-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.companion-heading h3,
+.companion-method-title h4 {
+  margin: 0;
+}
+
+.companion-heading h3 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.companion-heading p,
+.companion-method-title p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.companion-plain-explanation,
+.companion-choice,
+.companion-outcome {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
+}
+
+.companion-plain-explanation {
+  border-left: 4px solid var(--vng-blue);
+  background: var(--vng-blue-tint);
+}
+
+.companion-choice {
+  border-left: 4px solid var(--vng-yellow);
+  background: var(--vng-yellow-tint);
+}
+
+.companion-method-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.companion-method-card {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.companion-method-number {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--vng-orange);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.companion-method-title h4 {
+  font-size: 17px;
+}
+
+.companion-outcome {
+  background: var(--surface-alt);
+}
+
+.companion-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 22px;
+  font-size: 12.5px;
+}
+
+.companion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.companion-code {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 1fr) auto;
+  align-items: center;
+  gap: 7px 10px;
+  padding: 10px;
+  border: 1px dashed var(--vng-orange);
+  border-radius: 7px;
+  background: var(--vng-orange-tint);
+}
+
+.companion-code > span,
+.companion-code > small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.companion-code > strong {
+  color: var(--vng-orange-dark);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 20px;
+  letter-spacing: 0.08em;
+}
+
+.companion-code > small {
+  grid-column: 1 / -1;
+}
+
 .pdf-capability-badge.is-disabled {
   background: var(--surface-alt);
   color: var(--muted);
@@ -2174,6 +2302,7 @@ label.small {
   }
 
   .supplier-file-grid,
+  .companion-method-grid,
   .m365-folder-controls,
   .tran-reference-grid,
   .tran-reference-form,
@@ -2185,6 +2314,23 @@ label.small {
   .m365-account-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .companion-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .companion-actions .btn {
+    width: 100%;
+  }
+
+  .companion-code {
+    grid-template-columns: 1fr;
+  }
+
+  .companion-code > small {
+    grid-column: auto;
   }
 
   .m365-account-row .upload-actions .btn,

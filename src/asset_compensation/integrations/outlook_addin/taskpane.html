@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Đền bù thiết bị</title>
+    <link rel="stylesheet" href="./taskpane.css" />
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <script src="./taskpane.js" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <img class="brand-logo" src="./logo.png" alt="VNG" />
+      <div>
+        <p class="eyebrow">ASSET COMPENSATION HUB</p>
+        <h1>Đưa mail vào Product</h1>
+      </div>
+    </header>
+
+    <main>
+      <div id="global-status" class="notice notice--info" role="status" aria-live="polite">
+        Đang kết nối với Outlook…
+      </div>
+
+      <section id="pairing-panel" class="card" aria-labelledby="pairing-title">
+        <div class="card-heading">
+          <div>
+            <p class="step-label">BƯỚC 1</p>
+            <h2 id="pairing-title">Ghép nối phiên làm việc</h2>
+          </div>
+          <span id="connection-badge" class="badge badge--muted">Chưa ghép nối</span>
+        </div>
+
+        <form id="pairing-form" class="stack" novalidate>
+          <label for="pairing-code">Mã dùng một lần từ Product</label>
+          <input
+            id="pairing-code"
+            name="pairing-code"
+            type="password"
+            inputmode="text"
+            autocomplete="one-time-code"
+            minlength="6"
+            maxlength="64"
+            placeholder="Ví dụ: ABCD-2345"
+            required
+          />
+          <p class="hint">Mã không phải mật khẩu Outlook và sẽ hết hạn nhanh.</p>
+          <div class="button-row">
+            <button id="pair-button" class="button button--primary" type="submit">Ghép nối</button>
+          </div>
+        </form>
+        <button id="disconnect-button" class="button button--secondary" type="button" hidden>
+          Ngắt kết nối
+        </button>
+        <p id="session-summary" class="session-summary" hidden></p>
+      </section>
+
+      <section class="card" aria-labelledby="upload-title">
+        <div class="card-heading">
+          <div>
+            <p class="step-label">BƯỚC 2</p>
+            <h2 id="upload-title">Email đang mở</h2>
+          </div>
+          <span id="mail-badge" class="badge badge--muted">Chưa nạp</span>
+        </div>
+        <p id="current-subject" class="mail-subject">Hãy mở một email báo mất hoặc hư hỏng.</p>
+        <button id="upload-button" class="button button--primary button--wide" type="button" disabled>
+          Đưa email này vào Product
+        </button>
+        <p class="hint">
+          Add-in chỉ đọc email đang mở sau khi bạn bấm nút. Không quét hộp thư.
+        </p>
+      </section>
+
+      <section id="draft-panel" class="card" aria-labelledby="draft-title" hidden>
+        <div class="card-heading">
+          <div>
+            <p class="step-label">BƯỚC 3 · TRANNB</p>
+            <h2 id="draft-title">Reply All từ mail gốc</h2>
+          </div>
+          <button id="refresh-button" class="button button--compact button--secondary" type="button">
+            Làm mới
+          </button>
+        </div>
+        <p id="draft-empty" class="empty-state">
+          Nạp email này trước, sau đó xử lý TranNNB trên Product để nhận draft.
+        </p>
+        <div id="draft-list" class="draft-list" aria-live="polite"></div>
+        <p class="hint">
+          Nút mở draft chỉ mở cửa sổ Reply All kèm workbook. Bạn vẫn phải tự kiểm tra và bấm Send.
+        </p>
+      </section>
+
+      <aside class="safety-note" aria-label="Cam kết an toàn">
+        <strong>Không tự gửi mail.</strong>
+        Add-in không có lệnh Send và không dùng Microsoft Graph. Token chỉ nằm trong phiên task pane này.
+      </aside>
+    </main>
+
+    <footer>
+      <a id="product-link" href="/" target="_blank" rel="noreferrer">Mở Asset Compensation Hub</a>
+    </footer>
+  </body>
+</html>

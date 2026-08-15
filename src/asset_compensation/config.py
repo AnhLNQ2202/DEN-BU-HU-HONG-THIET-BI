@@ -39,6 +39,7 @@ class Settings:
     m365_client_id: str | None = None
     m365_client_secret: str | None = field(default=None, repr=False)
     m365_redirect_uri: str | None = None
+    public_origin: str | None = None
     damaged_debit_gl: str = "DEMO.COMP.RECEIVABLE"
     damaged_credit_gl: str = "DEMO.DAMAGED.OFFSET"
     lost_debit_gl: str = "DEMO.COMP.RECEIVABLE"
@@ -149,6 +150,11 @@ class Settings:
             m365_client_id=os.getenv("ASSET_HUB_M365_CLIENT_ID") or None,
             m365_client_secret=os.getenv("ASSET_HUB_M365_CLIENT_SECRET") or None,
             m365_redirect_uri=os.getenv("ASSET_HUB_M365_REDIRECT_URI") or None,
+            public_origin=(
+                os.getenv("ASSET_HUB_PUBLIC_ORIGIN")
+                or os.getenv("RENDER_EXTERNAL_URL")
+                or None
+            ),
             damaged_debit_gl=os.getenv(
                 "ASSET_HUB_DAMAGED_DEBIT_GL", "DEMO.COMP.RECEIVABLE"
             ),

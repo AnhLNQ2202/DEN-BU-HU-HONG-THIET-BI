@@ -4,6 +4,7 @@ import { dashboardApi } from "../api.js";
 import { translate } from "../i18n.js";
 import { formatCurrency } from "../utils.js";
 import { M365MailboxPanel } from "./M365MailboxPanel.jsx";
+import { OutlookCompanionPanel } from "./OutlookCompanionPanel.jsx";
 import { EmailUploadPanel } from "./UploadWorkspace.jsx";
 
 const MAX_REFERENCE_BYTES = 50 * 1024 * 1024;
@@ -315,6 +316,7 @@ export function TranWorkspace({
   const [workbookResult, setWorkbookResult] = useState(null);
   const [draftResult, setDraftResult] = useState(null);
   const [outlookDraftResult, setOutlookDraftResult] = useState(null);
+  const [companionDraftResult, setCompanionDraftResult] = useState(null);
   const [outlookMailboxConnected, setOutlookMailboxConnected] = useState(false);
   const [outlookMailboxRefreshVersion, setOutlookMailboxRefreshVersion] = useState(0);
   const [processingDate, setProcessingDate] = useState(localIsoDate());
@@ -345,6 +347,7 @@ export function TranWorkspace({
   const canExport = capabilities?.tran_workbook_export === true;
   const canDraft = capabilities?.tran_draft === true;
   const canOutlookDraft = capabilities?.tran_outlook_draft === true;
+  const canCompanionDraft = capabilities?.tran_companion_draft === true;
 
   useEffect(() => {
     referenceControllerRef.current?.abort();
@@ -368,6 +371,7 @@ export function TranWorkspace({
     setWorkbookResult(null);
     setDraftResult(null);
     setOutlookDraftResult(null);
+    setCompanionDraftResult(null);
     setOutlookMailboxConnected(false);
     setProcessingDate(localIsoDate());
     setYearSheet("");
@@ -419,6 +423,7 @@ export function TranWorkspace({
     setWorkbookResult(null);
     setDraftResult(null);
     setOutlookDraftResult(null);
+    setCompanionDraftResult(null);
     setPendingUploadedCaseId("");
     setEmailNotice(translate(language, "tranEmailPrefillReady"));
   }, [caseGroups, cases, language, lostCases, pendingUploadedCaseId]);
@@ -432,6 +437,7 @@ export function TranWorkspace({
     setWorkbookResult(null);
     setDraftResult(null);
     setOutlookDraftResult(null);
+    setCompanionDraftResult(null);
   }, [caseGroups, selectedGroupKey]);
 
   function invalidateOutputs() {
@@ -439,6 +445,7 @@ export function TranWorkspace({
     setWorkbookResult(null);
     setDraftResult(null);
     setOutlookDraftResult(null);
+    setCompanionDraftResult(null);
     setActionError("");
   }
 
@@ -546,6 +553,7 @@ export function TranWorkspace({
     setWorkbookResult(null);
     setDraftResult(null);
     setOutlookDraftResult(null);
+    setCompanionDraftResult(null);
     try {
       setResolution(await dashboardApi.resolveTranAssets(
         buildTranAssetsPayload(forms, language),
@@ -596,6 +604,7 @@ export function TranWorkspace({
     setBusyAction("draft");
     setActionError("");
     setDraftResult(null);
+    setCompanionDraftResult(null);
     try {
       setDraftResult(await dashboardApi.createTranDraft(
         buildTranAssetsPayload(forms, language),
@@ -626,6 +635,7 @@ export function TranWorkspace({
     setBusyAction("outlook-draft");
     setActionError("");
     setOutlookDraftResult(null);
+    setCompanionDraftResult(null);
     try {
       setOutlookDraftResult(await dashboardApi.createTranOutlookDraft(
         buildTranAssetsPayload(forms, language),
@@ -645,6 +655,38 @@ export function TranWorkspace({
           await Promise.resolve(onMailboxSynced?.()).catch(() => {});
         }
       }
+    } finally {
+      if (!controller.signal.aborted) setBusyAction("");
+    }
+  }
+
+  async function createCompanionDraft() {
+    const intro = bodyIntro.trim();
+    if (!resolution?.ready || !canCompanionDraft || !sourceHandle) return;
+    if (!intro) {
+      setActionError(translate(language, "tranDraftIntroRequired"));
+      return;
+    }
+    const controller = new AbortController();
+    actionControllerRef.current?.abort();
+    actionControllerRef.current = controller;
+    setBusyAction("companion-draft");
+    setActionError("");
+    setDraftResult(null);
+    setOutlookDraftResult(null);
+    setCompanionDraftResult(null);
+    try {
+      setCompanionDraftResult(await dashboardApi.createTranCompanionDraft(
+        buildTranAssetsPayload(forms, language),
+        sourceBindings,
+        sourceHandle,
+        intro,
+        processingDate,
+        yearSheet.trim(),
+        controller.signal,
+      ));
+    } catch (error) {
+      if (error.name !== "AbortError") setActionError(error.message);
     } finally {
       if (!controller.signal.aborted) setBusyAction("");
     }
@@ -678,6 +720,13 @@ export function TranWorkspace({
         onStatusChange={(nextStatus) => setOutlookMailboxConnected(nextStatus?.connected === true)}
         onSynced={onMailboxSynced}
         refreshVersion={`${testDataClearVersion}:${outlookMailboxRefreshVersion}`}
+        role="tran"
+      />
+
+      <OutlookCompanionPanel
+        capabilities={capabilities}
+        language={language}
+        refreshVersion={testDataClearVersion}
         role="tran"
       />
 
@@ -907,9 +956,9 @@ export function TranWorkspace({
               <h4>{translate(language, "tranOutputs")}</h4>
               <div className="panel-row tran-output-controls">
                 <label className="small" htmlFor="tran-processing-date">{translate(language, "tranProcessingDate")}</label>
-                <input id="tran-processing-date" type="date" value={processingDate} onChange={(event) => { setProcessingDate(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); }} />
+                <input id="tran-processing-date" type="date" value={processingDate} onChange={(event) => { setProcessingDate(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); setCompanionDraftResult(null); }} />
                 <label className="small" htmlFor="tran-year-sheet">{translate(language, "tranYearSheet")}</label>
-                <input id="tran-year-sheet" className="short-input" type="text" maxLength="31" value={yearSheet} placeholder={processingDate.slice(0, 4)} onChange={(event) => { setYearSheet(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); }} />
+                <input id="tran-year-sheet" className="short-input" type="text" maxLength="31" value={yearSheet} placeholder={processingDate.slice(0, 4)} onChange={(event) => { setYearSheet(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); setCompanionDraftResult(null); }} />
                 <button className="btn" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canExport} onClick={exportWorkbook}>
                   {translate(language, busyAction === "workbook" ? "tranExporting" : "tranExportWorkbook")}
                 </button>
@@ -927,7 +976,7 @@ export function TranWorkspace({
                   maxLength="10000"
                   value={bodyIntro}
                   placeholder={translate(language, "tranDraftIntroPlaceholder")}
-                  onChange={(event) => { setBodyIntro(event.target.value); setDraftResult(null); setOutlookDraftResult(null); setActionError(""); }}
+                  onChange={(event) => { setBodyIntro(event.target.value); setDraftResult(null); setOutlookDraftResult(null); setCompanionDraftResult(null); setActionError(""); }}
                 />
                 <div className="upload-actions">
                   <button className="btn secondary" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canDraft || !sourceHandle} onClick={createDraft}>
@@ -936,12 +985,16 @@ export function TranWorkspace({
                   <button className="btn" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canOutlookDraft || !outlookMailboxConnected || !sourceHandle} onClick={createOutlookDraft}>
                     {translate(language, busyAction === "outlook-draft" ? "tranOutlookDrafting" : "tranCreateOutlookDraft")}
                   </button>
+                  <button className="btn" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canCompanionDraft || !sourceHandle} onClick={createCompanionDraft}>
+                    {translate(language, busyAction === "companion-draft" ? "tranCompanionDrafting" : "tranCreateCompanionDraft")}
+                  </button>
                 </div>
                 <span className="disabled-note">{translate(language, "tranDraftSafety")}</span>
                 {!sourceHandle && <div className="disabled-note">{translate(language, selectedHandles.size > 1 ? "tranDraftMixedSources" : "tranDraftNeedsSource")}</div>}
                 {!canDraft && <div className="disabled-note">{translate(language, "tranDraftUnavailable")}</div>}
                 {canOutlookDraft && !outlookMailboxConnected && <div className="disabled-note">{translate(language, "tranOutlookDraftNeedsConnection")}</div>}
                 {!canOutlookDraft && <div className="disabled-note">{translate(language, "tranOutlookDraftUnavailable")}</div>}
+                {!canCompanionDraft && <div className="disabled-note">{translate(language, "tranCompanionDraftUnavailable")}</div>}
               </div>
               {draftResult && (
                 <div className="upload-result">
@@ -964,6 +1017,18 @@ export function TranWorkspace({
                         : <span className="none">{translate(language, "tranOutlookDraftOpenUnavailable")}</span>}
                     </div>
                   </div>
+                </div>
+              )}
+              {companionDraftResult && (
+                <div className="upload-result">
+                  <strong>{translate(language, "tranCompanionDraftReady")}</strong>
+                  <p>{translate(language, "tranCompanionDraftReadyHint")}</p>
+                  {companionDraftResult.workbook_download_url && (
+                    <div className="result-file">
+                      <span>{translate(language, "tranDraftWorkbook")}</span>
+                      <a href={companionDraftResult.workbook_download_url} download>↓ Excel</a>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

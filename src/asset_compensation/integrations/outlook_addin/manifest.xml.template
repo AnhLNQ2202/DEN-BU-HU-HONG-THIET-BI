@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides"
+  xsi:type="MailApp">
+  <Id>6e64d6a2-4745-47c9-9a80-bd655aa7db72</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Asset Compensation Hub</ProviderName>
+  <DefaultLocale>vi-VN</DefaultLocale>
+  <DisplayName DefaultValue="Đền bù thiết bị" />
+  <Description DefaultValue="Nạp email báo mất/hư hỏng và mở Reply All từ Product. Không tự gửi mail." />
+  <IconUrl DefaultValue="__ASSET_HUB_ORIGIN__/outlook-addin/logo-64.png" />
+  <HighResolutionIconUrl DefaultValue="__ASSET_HUB_ORIGIN__/outlook-addin/logo-128.png" />
+  <SupportUrl DefaultValue="__ASSET_HUB_ORIGIN__/" />
+  <AppDomains>
+    <AppDomain>__ASSET_HUB_ORIGIN__</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Mailbox" />
+  </Hosts>
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.14" />
+    </Sets>
+  </Requirements>
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="__ASSET_HUB_ORIGIN__/outlook-addin/taskpane.html" />
+        <RequestedHeight>450</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+  <Permissions>ReadItem</Permissions>
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read" />
+  </Rule>
+  <DisableEntityHighlighting>false</DisableEntityHighlighting>
+
+  <VersionOverrides
+    xmlns="http://schemas.microsoft.com/office/mailappversionoverrides"
+    xsi:type="VersionOverridesV1_0">
+    <Requirements>
+      <bt:Sets DefaultMinVersion="1.14">
+        <bt:Set Name="Mailbox" />
+      </bt:Sets>
+    </Requirements>
+    <Hosts>
+      <Host xsi:type="MailHost">
+        <DesktopFormFactor>
+          <FunctionFile resid="Taskpane.Url" />
+          <ExtensionPoint xsi:type="MessageReadCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="AssetHub.ReadMessage.Group">
+                <Label resid="Group.Label" />
+                <Control xsi:type="Button" id="AssetHub.ReadMessage.OpenPane">
+                  <Label resid="Button.Label" />
+                  <Supertip>
+                    <Title resid="Button.Label" />
+                    <Description resid="Button.Description" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Logo.16" />
+                    <bt:Image size="32" resid="Logo.32" />
+                    <bt:Image size="80" resid="Logo.80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Logo.16" DefaultValue="__ASSET_HUB_ORIGIN__/outlook-addin/logo-16.png" />
+        <bt:Image id="Logo.32" DefaultValue="__ASSET_HUB_ORIGIN__/outlook-addin/logo-32.png" />
+        <bt:Image id="Logo.80" DefaultValue="__ASSET_HUB_ORIGIN__/outlook-addin/logo-80.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Taskpane.Url" DefaultValue="__ASSET_HUB_ORIGIN__/outlook-addin/taskpane.html" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="Group.Label" DefaultValue="Đền bù thiết bị" />
+        <bt:String id="Button.Label" DefaultValue="Đưa vào Product" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="Button.Description" DefaultValue="Nạp email đang mở vào Product; chỉ tạo Reply All khi bạn yêu cầu, không tự gửi." />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>
