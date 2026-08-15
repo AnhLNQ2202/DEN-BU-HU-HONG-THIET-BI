@@ -1524,6 +1524,83 @@ label.small {
   align-self: end;
 }
 
+.tran-workbench-nav {
+  position: sticky;
+  z-index: 12;
+  top: 8px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 5px 18px rgba(41, 40, 42, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.tran-workbench-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.tran-workbench-tab {
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tran-workbench-tab:hover:not(:disabled) {
+  border-color: var(--vng-orange);
+  color: var(--vng-orange-dark);
+}
+
+.tran-workbench-tab.is-active {
+  border-color: var(--vng-orange);
+  background: var(--vng-orange-tint);
+  color: var(--vng-orange-dark);
+}
+
+.tran-workbench-tab:disabled {
+  opacity: 0.48;
+}
+
+.tran-workbench-panel[hidden],
+.tran-result-step[hidden],
+.tran-output-section[hidden] {
+  display: none;
+}
+
+.tran-workbench-panel .compensation-actions {
+  position: sticky;
+  z-index: 8;
+  bottom: 0;
+  margin: 0 -4px -4px;
+  padding: 12px 4px 4px;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 -8px 16px rgba(41, 40, 42, 0.04);
+  backdrop-filter: blur(8px);
+}
+
+.tran-step-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.tran-step-actions--top {
+  justify-content: flex-start;
+  margin-top: 0;
+  padding: 0 0 12px;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+}
+
 .tran-asset-editor-list,
 .tran-resolution-list {
   display: grid;
@@ -1562,6 +1639,90 @@ label.small {
 
 .tran-resolution-item .compensation-result-summary {
   margin-bottom: 0;
+}
+
+.tran-resolution-item {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+}
+
+.tran-resolution-summary {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.2fr) minmax(180px, 1fr) minmax(130px, 0.7fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.tran-resolution-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tran-resolution-summary::after {
+  content: "⌄";
+  color: var(--vng-navy);
+  font-size: 18px;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.tran-resolution-item[open] > .tran-resolution-summary::after {
+  transform: rotate(180deg);
+}
+
+.tran-resolution-item[open] > .tran-resolution-summary {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+
+.tran-resolution-summary__asset {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.tran-resolution-summary__asset > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tran-resolution-summary > strong {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.tran-resolution-summary > strong.is-ready {
+  color: var(--success);
+}
+
+.tran-resolution-summary > strong.is-review {
+  color: #7a5a00;
+}
+
+.tran-resolution-summary__amount {
+  color: var(--vng-orange-dark);
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tran-resolution-summary__details {
+  color: var(--vng-navy);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tran-resolution-body {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
 }
 
 .tran-output-section {
@@ -2420,11 +2581,57 @@ label.small {
   .compensation-metrics {
     grid-template-columns: repeat(2, minmax(145px, 1fr));
   }
+
+  .tran-resolution-summary {
+    grid-template-columns: minmax(150px, 1fr) minmax(150px, 0.8fr) minmax(120px, 0.6fr) auto auto;
+  }
 }
 
 @media (max-width: 620px) {
   body {
     padding: 12px;
+  }
+
+  .tran-workbench-nav {
+    top: 4px;
+  }
+
+  .tran-workbench-tab {
+    min-height: 48px;
+    padding: 7px 5px;
+    font-size: 11.5px;
+    line-height: 1.25;
+  }
+
+  .tran-resolution-summary {
+    grid-template-columns: 1fr auto;
+    gap: 5px 10px;
+  }
+
+  .tran-resolution-summary__asset {
+    grid-column: 1 / -1;
+  }
+
+  .tran-resolution-summary__amount {
+    text-align: left;
+  }
+
+  .tran-resolution-summary__details {
+    display: none;
+  }
+
+  .tran-resolution-summary::after {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .tran-step-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .tran-step-actions .btn {
+    width: 100%;
   }
 
   .topbar,

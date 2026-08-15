@@ -247,51 +247,58 @@ export function TranResolutionCard({ item, index, language }) {
   const preview = item.preview;
   const asset = item.asset;
   return (
-    <article className="tran-resolution-item">
-      <header>
-        <strong>{translate(language, "tranAssetResult")} {index + 1}</strong>
-        <span>{asset?.tag_number || "—"}</span>
-      </header>
-      <div className={`compensation-result-summary ${item.ready ? "result-exempt" : "result-needs_review"}`}>
-        <span>{translate(language, "resultStatus")}</span>
-        <strong>{translate(language, item.ready ? "tranReady" : "resultReview")}</strong>
-      </div>
-      <div className="tran-reference-grid">
-        <div className="tran-reference-card"><span>FA&amp;GL</span><strong>{referenceStatusLabel(language, item.fa_status)}</strong></div>
-        <div className="tran-reference-card"><span>CCDC</span><strong>{referenceStatusLabel(language, item.classification_status)}</strong></div>
-      </div>
-      {preview && (
-        <dl className="compensation-metrics">
-          <div><dt>{translate(language, "resultStatus")}</dt><dd>{resultStatusLabel(language, preview.status)}</dd></div>
-          <div><dt>{translate(language, "usageMonths")}</dt><dd>{preview.usage_months == null ? "—" : `${preview.usage_months} ${translate(language, "months")}`}</dd></div>
-          <div><dt>{translate(language, "remainingRate")}</dt><dd>{percentage(preview.remaining_rate)}</dd></div>
-          <div><dt>{translate(language, "remainingValue")}</dt><dd>{preview.remaining_value == null ? "—" : formatCurrency(preview.remaining_value)}</dd></div>
-          <div><dt>{translate(language, "responsibilityFee")}</dt><dd>{preview.fee_value == null ? "—" : `${formatCurrency(preview.fee_value)} · ${percentage(preview.fee_rate)}`}</dd></div>
-          <div className="compensation-total"><dt>{translate(language, "totalCompensation")}</dt><dd>{preview.total_amount == null ? "—" : formatCurrency(preview.total_amount)}</dd></div>
-        </dl>
-      )}
-      {asset && (
-        <details className="policy-trace tran-provenance">
-          <summary>{translate(language, "tranResolvedEvidence")}</summary>
-          <dl>
-            <div><dt>{translate(language, "tagNumber")}</dt><dd>{asset.tag_number || "—"}</dd></div>
-            <div><dt>{translate(language, "assetNumber")}</dt><dd>{asset.asset_number || "—"}</dd></div>
-            <div><dt>{translate(language, "book")}</dt><dd>{asset.book || "—"}</dd></div>
-            <div><dt>{translate(language, "entity")}</dt><dd>{asset.entity || "—"}</dd></div>
-            <div><dt>{translate(language, "costCenter")}</dt><dd>{asset.cost_center || "—"}</dd></div>
-            <div><dt>{translate(language, "productCode")}</dt><dd>{asset.product_code || "—"}</dd></div>
-            <div><dt>{translate(language, "location")}</dt><dd>{asset.location || "—"}</dd></div>
-            <div><dt>{translate(language, "originalCost")}</dt><dd>{asset.cost == null ? "—" : formatCurrency(asset.cost)}</dd></div>
+    <details className="tran-resolution-item" open={!item.ready}>
+      <summary className="tran-resolution-summary">
+        <span className="tran-resolution-summary__asset">
+          <strong>{translate(language, "tranAssetResult")} {index + 1}</strong>
+          <span>{asset?.tag_number || "—"}</span>
+        </span>
+        <strong className={item.ready ? "is-ready" : "is-review"}>
+          {translate(language, item.ready ? "tranReady" : "resultReview")}
+        </strong>
+        <span className="tran-resolution-summary__amount">
+          {preview?.total_amount == null ? "—" : formatCurrency(preview.total_amount)}
+        </span>
+        <span className="tran-resolution-summary__details">{translate(language, "tranResultDetails")}</span>
+      </summary>
+      <div className="tran-resolution-body">
+        <div className="tran-reference-grid">
+          <div className="tran-reference-card"><span>FA&amp;GL</span><strong>{referenceStatusLabel(language, item.fa_status)}</strong></div>
+          <div className="tran-reference-card"><span>CCDC</span><strong>{referenceStatusLabel(language, item.classification_status)}</strong></div>
+        </div>
+        {preview && (
+          <dl className="compensation-metrics">
+            <div><dt>{translate(language, "resultStatus")}</dt><dd>{resultStatusLabel(language, preview.status)}</dd></div>
+            <div><dt>{translate(language, "usageMonths")}</dt><dd>{preview.usage_months == null ? "—" : `${preview.usage_months} ${translate(language, "months")}`}</dd></div>
+            <div><dt>{translate(language, "remainingRate")}</dt><dd>{percentage(preview.remaining_rate)}</dd></div>
+            <div><dt>{translate(language, "remainingValue")}</dt><dd>{preview.remaining_value == null ? "—" : formatCurrency(preview.remaining_value)}</dd></div>
+            <div><dt>{translate(language, "responsibilityFee")}</dt><dd>{preview.fee_value == null ? "—" : `${formatCurrency(preview.fee_value)} · ${percentage(preview.fee_rate)}`}</dd></div>
+            <div className="compensation-total"><dt>{translate(language, "totalCompensation")}</dt><dd>{preview.total_amount == null ? "—" : formatCurrency(preview.total_amount)}</dd></div>
           </dl>
-        </details>
-      )}
-      {!!item.notes.length && (
-        <div className="tran-notes"><strong>{translate(language, "tranProvenanceNotes")}</strong><ul>{item.notes.map((note) => <li key={note}>{note}</li>)}</ul></div>
-      )}
-      {!!item.issues.length && (
-        <div className="compensation-reasons"><strong>{translate(language, "tranBlockingIssues")}</strong><ul>{item.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>
-      )}
-    </article>
+        )}
+        {asset && (
+          <details className="policy-trace tran-provenance">
+            <summary>{translate(language, "tranResolvedEvidence")}</summary>
+            <dl>
+              <div><dt>{translate(language, "tagNumber")}</dt><dd>{asset.tag_number || "—"}</dd></div>
+              <div><dt>{translate(language, "assetNumber")}</dt><dd>{asset.asset_number || "—"}</dd></div>
+              <div><dt>{translate(language, "book")}</dt><dd>{asset.book || "—"}</dd></div>
+              <div><dt>{translate(language, "entity")}</dt><dd>{asset.entity || "—"}</dd></div>
+              <div><dt>{translate(language, "costCenter")}</dt><dd>{asset.cost_center || "—"}</dd></div>
+              <div><dt>{translate(language, "productCode")}</dt><dd>{asset.product_code || "—"}</dd></div>
+              <div><dt>{translate(language, "location")}</dt><dd>{asset.location || "—"}</dd></div>
+              <div><dt>{translate(language, "originalCost")}</dt><dd>{asset.cost == null ? "—" : formatCurrency(asset.cost)}</dd></div>
+            </dl>
+          </details>
+        )}
+        {!!item.notes.length && (
+          <div className="tran-notes"><strong>{translate(language, "tranProvenanceNotes")}</strong><ul>{item.notes.map((note) => <li key={note}>{note}</li>)}</ul></div>
+        )}
+        {!!item.issues.length && (
+          <div className="compensation-reasons"><strong>{translate(language, "tranBlockingIssues")}</strong><ul>{item.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -332,6 +339,7 @@ export function TranWorkspace({
   const [processingDate, setProcessingDate] = useState(localIsoDate());
   const [yearSheet, setYearSheet] = useState("");
   const [bodyIntro, setBodyIntro] = useState("");
+  const [workspaceStep, setWorkspaceStep] = useState("input");
   const faInputRef = useRef(null);
   const ccdcInputRef = useRef(null);
   const referenceControllerRef = useRef(null);
@@ -386,6 +394,7 @@ export function TranWorkspace({
     setProcessingDate(localIsoDate());
     setYearSheet("");
     setBodyIntro("");
+    setWorkspaceStep("input");
     if (faInputRef.current) faInputRef.current.value = "";
     if (ccdcInputRef.current) ccdcInputRef.current.value = "";
 
@@ -439,6 +448,7 @@ export function TranWorkspace({
     setSelectedGroupKey(group.key);
     setSourceBindings(expanded.map((item) => item.binding));
     setForms(expanded.map((item) => item.form));
+    setWorkspaceStep("input");
     setResolution(null);
     setWorkbookResult(null);
     setDraftResult(null);
@@ -453,6 +463,7 @@ export function TranWorkspace({
     setSelectedGroupKey("");
     setSourceBindings([]);
     setForms([{ ...EMPTY_FORM }]);
+    setWorkspaceStep("input");
     setResolution(null);
     setWorkbookResult(null);
     setDraftResult(null);
@@ -474,6 +485,7 @@ export function TranWorkspace({
       itemIndex === index ? { ...item, [field]: value } : item
     )));
     invalidateOutputs();
+    setWorkspaceStep("input");
   }
 
   function chooseCaseGroup(groupKey) {
@@ -488,6 +500,7 @@ export function TranWorkspace({
     setForms(expanded.length ? expanded.map((item) => item.form) : [{ ...EMPTY_FORM }]);
     setEmailNotice("");
     invalidateOutputs();
+    setWorkspaceStep("input");
   }
 
   function removeAssetRow(index) {
@@ -495,6 +508,7 @@ export function TranWorkspace({
     setForms((current) => current.filter((_, itemIndex) => itemIndex !== index));
     setSourceBindings((current) => current.filter((_, itemIndex) => itemIndex !== index));
     invalidateOutputs();
+    setWorkspaceStep("input");
   }
 
   function emailUploadCompleted(uploadResult) {
@@ -556,6 +570,7 @@ export function TranWorkspace({
       if (faInputRef.current) faInputRef.current.value = "";
       if (ccdcInputRef.current) ccdcInputRef.current.value = "";
       invalidateOutputs();
+      setWorkspaceStep("input");
       await onReferencesChanged?.();
     } catch (error) {
       if (error.name !== "AbortError") {
@@ -584,6 +599,8 @@ export function TranWorkspace({
     actionControllerRef.current?.abort();
     actionControllerRef.current = controller;
     setBusyAction("resolve");
+    setResolution(null);
+    setWorkspaceStep("result");
     setActionError("");
     setWorkbookResult(null);
     setDraftResult(null);
@@ -603,6 +620,7 @@ export function TranWorkspace({
     } catch (error) {
       if (error.name !== "AbortError") {
         setResolution(null);
+        setWorkspaceStep("input");
         pushToast(translate(language, "toastErrorTitle"), error.message, "error");
       }
     } finally {
@@ -880,7 +898,53 @@ export function TranWorkspace({
         {referenceError && <div className="inline-error" role="alert">{referenceError}</div>}
       </section>
 
-      <section className="panel operation-panel compensation-panel">
+      <nav className="panel tran-workbench-nav" aria-label={translate(language, "tranWorkflowSteps")}>
+        <div className="tran-workbench-tabs" role="tablist">
+          <button
+            aria-controls="tran-step-input"
+            aria-selected={workspaceStep === "input"}
+            className={`tran-workbench-tab ${workspaceStep === "input" ? "is-active" : ""}`}
+            id="tran-tab-input"
+            onClick={() => setWorkspaceStep("input")}
+            role="tab"
+            type="button"
+          >
+            {translate(language, "tranStepInput")}
+          </button>
+          <button
+            aria-controls="tran-step-result-output"
+            aria-selected={workspaceStep === "result"}
+            className={`tran-workbench-tab ${workspaceStep === "result" ? "is-active" : ""}`}
+            disabled={!resolution && busyAction !== "resolve"}
+            id="tran-tab-result"
+            onClick={() => setWorkspaceStep("result")}
+            role="tab"
+            type="button"
+          >
+            {translate(language, "tranStepResult")}
+          </button>
+          <button
+            aria-controls="tran-step-result-output"
+            aria-selected={workspaceStep === "output"}
+            className={`tran-workbench-tab ${workspaceStep === "output" ? "is-active" : ""}`}
+            disabled={!resolution?.ready}
+            id="tran-tab-output"
+            onClick={() => setWorkspaceStep("output")}
+            role="tab"
+            type="button"
+          >
+            {translate(language, "tranStepOutput")}
+          </button>
+        </div>
+      </nav>
+
+      <section
+        aria-labelledby="tran-tab-input"
+        className="panel operation-panel compensation-panel tran-workbench-panel"
+        hidden={workspaceStep !== "input"}
+        id="tran-step-input"
+        role="tabpanel"
+      >
         <h3>{translate(language, "compensationInput")}</h3>
         <form className="compensation-form" onSubmit={resolveAsset}>
           <div className="compensation-prefill">
@@ -906,6 +970,7 @@ export function TranWorkspace({
                 setForms([{ ...DEMO_FORM, lost_date: localIsoDate() }]);
                 setEmailNotice("");
                 invalidateOutputs();
+                setWorkspaceStep("input");
               }}
             >
               {translate(language, "loadDemo")}
@@ -993,38 +1058,62 @@ export function TranWorkspace({
         </form>
       </section>
 
-      <section className="panel compensation-result-panel" aria-live="polite">
-        <h3>{translate(language, "tranResolutionResult")}</h3>
+      <section
+        aria-labelledby={workspaceStep === "output" ? "tran-tab-output" : "tran-tab-result"}
+        aria-live="polite"
+        className="panel compensation-result-panel tran-workbench-panel"
+        hidden={workspaceStep === "input"}
+        id="tran-step-result-output"
+        role="tabpanel"
+      >
+        <h3>{translate(language, workspaceStep === "output" ? "tranOutputs" : "tranResolutionResult")}</h3>
         {actionError && <div className="inline-error" role="alert">{actionError}</div>}
-        {!resolvedItems.length && busyAction !== "resolve" && (
+        {workspaceStep === "result" && !resolvedItems.length && busyAction !== "resolve" && (
           <div className="compensation-empty">{translate(language, "tranNoResolution")}</div>
         )}
-        {busyAction === "resolve" && (
+        {workspaceStep === "result" && busyAction === "resolve" && (
           <div className="upload-progress" role="status">
             <span>{translate(language, "tranResolving")}</span><progress />
           </div>
         )}
         {!!resolvedItems.length && (
           <>
-            <div className={`compensation-result-summary ${resolution.ready ? "result-exempt" : "result-needs_review"}`}>
-              <span>{translate(language, "tranResolutionSummary")}</span>
-              <strong>
-                {resolvedItems.filter((item) => item.ready).length}/{resolvedItems.length} {translate(language, "tranAssetsReady")}
-              </strong>
-            </div>
-            <div className="tran-resolution-list">
-              {resolvedItems.map((item, index) => (
-                <TranResolutionCard
-                  item={item}
-                  index={index}
-                  language={language}
-                  key={`${item.asset?.tag_number || "asset"}-${index}`}
-                />
-              ))}
+            <div className="tran-result-step" hidden={workspaceStep !== "result"}>
+              <div className={`compensation-result-summary ${resolution.ready ? "result-exempt" : "result-needs_review"}`}>
+                <span>{translate(language, "tranResolutionSummary")}</span>
+                <strong>
+                  {resolvedItems.filter((item) => item.ready).length}/{resolvedItems.length} {translate(language, "tranAssetsReady")}
+                </strong>
+              </div>
+              <div className="tran-resolution-list">
+                {resolvedItems.map((item, index) => (
+                  <TranResolutionCard
+                    item={item}
+                    index={index}
+                    language={language}
+                    key={`${item.asset?.tag_number || "asset"}-${index}`}
+                  />
+                ))}
+              </div>
+              <div className="tran-step-actions">
+                <button className="btn secondary" type="button" onClick={() => setWorkspaceStep("input")}>
+                  {translate(language, "tranEditAsset")}
+                </button>
+                <button className="btn" type="button" disabled={!resolution.ready} onClick={() => setWorkspaceStep("output")}>
+                  {translate(language, "tranContinueOutput")}
+                </button>
+              </div>
             </div>
 
-            <div className="tran-output-section">
-              <h4>{translate(language, "tranOutputs")}</h4>
+            <div className="tran-output-section" hidden={workspaceStep !== "output"}>
+              <div className="tran-step-actions tran-step-actions--top">
+                <button className="btn secondary" type="button" onClick={() => setWorkspaceStep("result")}>
+                  {translate(language, "tranBackToResult")}
+                </button>
+                <button className="btn secondary" type="button" onClick={() => setWorkspaceStep("input")}>
+                  {translate(language, "tranEditAsset")}
+                </button>
+              </div>
               <div className="panel-row tran-output-controls">
                 <label className="small" htmlFor="tran-processing-date">{translate(language, "tranProcessingDate")}</label>
                 <input id="tran-processing-date" type="date" value={processingDate} onChange={(event) => { setProcessingDate(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); setCompanionDraftResult(null); }} />

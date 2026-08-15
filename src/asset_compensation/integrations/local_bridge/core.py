@@ -12,6 +12,7 @@ import binascii
 import hashlib
 import html
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -118,6 +119,15 @@ def normalize_origin(raw: str) -> str:
     if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost"}:
         raise BridgeError("Server thật phải dùng https:// để bảo vệ mã kết nối.")
     return value
+
+
+def subject_eml_filename(subject: str, fallback: str) -> str:
+    """Return a bounded, Windows-safe display filename derived from Subject."""
+
+    normalized = unicodedata.normalize("NFKC", str(subject or ""))
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", normalized)
+    cleaned = " ".join(cleaned.split())[:80].rstrip(" .-")
+    return f"{cleaned}.eml" if cleaned else fallback
 
 
 def _clean_header(value: object, *, limit: int) -> str:

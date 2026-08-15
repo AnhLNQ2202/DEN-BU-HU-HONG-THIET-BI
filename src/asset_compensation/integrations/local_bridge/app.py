@@ -29,6 +29,7 @@ try:  # Works both from the downloaded folder and as an importable package.
         normalize_origin,
         sanitize_reply_html,
         select_scan_candidates,
+        subject_eml_filename,
     )
 except ImportError:  # pragma: no cover - exercised by the downloaded script
     from core import (  # type: ignore[no-redef]
@@ -45,6 +46,7 @@ except ImportError:  # pragma: no cover - exercised by the downloaded script
         normalize_origin,
         sanitize_reply_html,
         select_scan_candidates,
+        subject_eml_filename,
     )
 
 DEFAULT_SERVER_URL = "__ASSET_HUB_ORIGIN__"
@@ -507,7 +509,8 @@ class BridgeGui:
         for index, snapshot in enumerate(candidates, start=1):
             eml = build_minimized_eml(snapshot)
             stamp = snapshot.received_at.astimezone(UTC).strftime("%Y%m%d-%H%M%S")
-            filename = f"outlook-{role}-{stamp}-{index}.eml"
+            fallback = f"outlook-{role}-{stamp}-{index}.eml"
+            filename = subject_eml_filename(snapshot.subject, fallback)
             handle = state.client.upload_eml(filename, eml)
             source = SourceReference(
                 role=role,

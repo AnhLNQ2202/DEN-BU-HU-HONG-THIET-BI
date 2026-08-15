@@ -30,6 +30,7 @@ from asset_compensation.integrations.local_bridge.core import (
     match_package_source,
     sanitize_reply_html,
     select_scan_candidates,
+    subject_eml_filename,
 )
 
 
@@ -118,6 +119,22 @@ def test_build_minimized_eml_is_valid_bounded_and_omits_attachments() -> None:
     assert parsed["X-Asset-Hub-Attachments"] == "omitted-for-minimum-data"
     assert not any(part.get_content_disposition() == "attachment" for part in parsed.walk())
     assert "Thiết bị mẫu" in parsed.get_body(preferencelist=("html",)).get_content()
+
+
+def test_subject_eml_filename_is_readable_bounded_and_windows_safe() -> None:
+    assert subject_eml_filename(
+        " FW: Thất lạc / Thiết bị thử? ",
+        "outlook-tran-fallback.eml",
+    ) == "FW- Thất lạc - Thiết bị thử.eml"
+    assert subject_eml_filename("", "outlook-tran-fallback.eml") == (
+        "outlook-tran-fallback.eml"
+    )
+    assert len(subject_eml_filename("A" * 200, "fallback.eml")) == 84
+
+
+def test_bridge_upload_uses_subject_filename_with_technical_fallback() -> None:
+    source = (PACKAGE_DIRECTORY / "app.py").read_text(encoding="utf-8")
+    assert "filename = subject_eml_filename(snapshot.subject, fallback)" in source
 
 
 def test_build_minimized_eml_is_deterministic_across_reconnect_and_item_move() -> None:
