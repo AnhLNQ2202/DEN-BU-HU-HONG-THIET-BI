@@ -297,7 +297,23 @@ def _first_group(patterns: Iterable[str], value: str) -> str | None:
     return None
 
 
-def _asset_code(subject: str, body: str) -> str:
+def _asset_code(
+    subject: str,
+    body: str,
+    *,
+    excluded_values: Iterable[str] = (),
+) -> str:
+    excluded = {
+        value.strip().casefold()
+        for value in excluded_values
+        if isinstance(value, str) and value.strip()
+    }
+    excluded.update(
+        part.casefold()
+        for value in tuple(excluded)
+        for part in re.split(r"[._-]+", value)
+        if part
+    )
     labelled = _first_group(
         (
             r"(?:Mã thiết bị|Mã tài sản)\s*:\s*([A-Z][A-Z0-9-]*\d[A-Z0-9-]*)",
@@ -305,13 +321,14 @@ def _asset_code(subject: str, body: str) -> str:
         ),
         body,
     )
-    if labelled:
+    if labelled and labelled.casefold() not in excluded:
         return labelled.upper()
-    subject_match = _ASSET_CODE_RE.search(subject)
-    if subject_match:
-        return subject_match.group(0).upper()
-    body_match = _ASSET_CODE_RE.search(body)
-    return body_match.group(0).upper() if body_match else ""
+    for value in (subject, body):
+        for match in _ASSET_CODE_RE.finditer(value):
+            candidate = match.group(0)
+            if candidate.casefold() not in excluded:
+                return candidate.upper()
+    return ""
 
 
 def _clean_domain(value: str) -> str:
@@ -482,30 +499,42 @@ def _cell(row: list[str], index: int | None) -> str:
     return row[index].strip() if index is not None and index < len(row) else ""
 
 
-def _initial_lost_notice_rows(html: str) -> list[dict[str, str]]:
-    """Read the small Vietnamese asset table from the first IT loss notice."""
+def _initial_lost_notice_rows(html: str) -> list[dict[str, object]]:
+    """Read approved Vietnamese asset tables from initial IT loss notices."""
 
     extractor = _TableExtractor()
     extractor.feed(html)
     extractor.close()
-    expected_headers = {
+    status_headers = {
         "ten thiet bi",
         "ma thiet bi",
         "tinh trang",
         "ghi chu",
+    }
+    status_headers_with_type = status_headers | {"loai thiet bi"}
+    dated_headers = {
+        "loai thiet bi",
+        "ten thiet bi",
+        "ma thiet bi",
+        "thoi gian mat",
+        "chi phi dau tu ban dau",
     }
     for table in extractor.tables:
         for header_index, header_candidate in enumerate(table):
             folded_headers = [
                 _fold(_normalize_text(value)).strip() for value in header_candidate
             ]
-            if (
-                len(folded_headers) != len(expected_headers)
-                or set(folded_headers) != expected_headers
-            ):
+            header_set = set(folded_headers)
+            if len(header_set) != len(folded_headers):
                 continue
-            columns = {name: folded_headers.index(name) for name in expected_headers}
-            parsed_rows: list[dict[str, str]] = []
+            if header_set in (status_headers, status_headers_with_type):
+                schema = "STATUS"
+            elif header_set == dated_headers:
+                schema = "DATED"
+            else:
+                continue
+            columns = {name: folded_headers.index(name) for name in header_set}
+            parsed_rows: list[dict[str, object]] = []
             for row in table[header_index + 1 :]:
                 if len(row) != len(folded_headers):
                     raise EmlParseError(
@@ -513,23 +542,46 @@ def _initial_lost_notice_rows(html: str) -> list[dict[str, str]]:
                     )
                 asset_name = _cell(row, columns["ten thiet bi"])
                 asset_code = _cell(row, columns["ma thiet bi"]).upper()
-                reported_status = _cell(row, columns["tinh trang"])
-                if (
-                    not asset_name
-                    or _ASSET_CODE_RE.fullmatch(asset_code) is None
-                    or re.search(r"\b(?:that lac|mat)\b", _fold(reported_status)) is None
-                ):
+                if not asset_name or _ASSET_CODE_RE.fullmatch(asset_code) is None:
                     raise EmlParseError(
                         "Initial lost-device table contains an invalid asset row"
                     )
-                parsed_rows.append(
-                    {
-                        "asset_code": asset_code,
-                        "asset_name": asset_name,
-                        "reported_status": reported_status,
-                        "source_note": _cell(row, columns["ghi chu"]),
-                    }
-                )
+                parsed_row: dict[str, object] = {
+                    "asset_code": asset_code,
+                    "asset_name": asset_name,
+                }
+                asset_type = _cell(row, columns.get("loai thiet bi"))
+                if asset_type:
+                    parsed_row["asset_type"] = asset_type
+                if schema == "STATUS":
+                    reported_status = _cell(row, columns["tinh trang"])
+                    if (
+                        re.search(r"\b(?:that lac|mat)\b", _fold(reported_status))
+                        is None
+                    ):
+                        raise EmlParseError(
+                            "Initial lost-device table contains an invalid asset row"
+                        )
+                    parsed_row.update(
+                        {
+                            "reported_status": reported_status,
+                            "source_note": _cell(row, columns["ghi chu"]),
+                        }
+                    )
+                else:
+                    loss_date = _cell(row, columns["thoi gian mat"])
+                    if loss_date and re.fullmatch(_DATE_TOKEN, loss_date) is None:
+                        raise EmlParseError(
+                            "Initial lost-device table contains an invalid asset row"
+                        )
+                    if loss_date:
+                        parsed_row["loss_date"] = loss_date
+                    original_value = _table_amount(
+                        _cell(row, columns["chi phi dau tu ban dau"])
+                    )
+                    if original_value is not None:
+                        parsed_row["original_value"] = original_value
+                parsed_rows.append(parsed_row)
             if parsed_rows:
                 return parsed_rows
             raise EmlParseError(
@@ -779,7 +831,7 @@ def _damaged_records(body: str, subject: str) -> list[dict[str, object]]:
         explicit = [(asset, True) for asset in repaired_assets]
         explicit.extend((asset, False) for asset in not_repaired_assets)
         if not explicit:
-            fallback = _asset_code(subject, block) or "N/A"
+            fallback = _asset_code(subject, block, excluded_values=(domain,)) or "N/A"
             explicit = [(fallback, repair_cost > 0)]
         for asset, repaired in explicit:
             records.append(
@@ -857,11 +909,11 @@ def _fallback_case(
     *,
     source_file: str | None,
     source_id: str,
-    initial_lost_rows: list[dict[str, str]] | None = None,
+    initial_lost_rows: list[dict[str, object]] | None = None,
 ) -> ParsedCase:
     case_type = _case_type(subject, body)
-    asset_code = _asset_code(subject, body)
     domain = _domain(body, subject)
+    asset_code = _asset_code(subject, body, excluded_values=(domain,))
     lost_row = _lost_row(body, asset_code) if case_type == "LOST" else {}
     if not domain and lost_row:
         domain = lost_row["domain"]
@@ -879,10 +931,10 @@ def _fallback_case(
             for row in initial_lost_rows
         ]
         asset_code = ", ".join(
-            dict.fromkeys(row["asset_code"] for row in initial_lost_rows)
+            dict.fromkeys(str(row["asset_code"]) for row in initial_lost_rows)
         )
         notice_asset_name = ", ".join(
-            dict.fromkeys(row["asset_name"] for row in initial_lost_rows)
+            dict.fromkeys(str(row["asset_name"]) for row in initial_lost_rows)
         )
         metadata.update(
             {
@@ -991,7 +1043,7 @@ class EmlParser:
             raise EmlSkipError(reason)
 
         source_id = _source_id(message, data)
-        initial_lost_rows: list[dict[str, str]] = []
+        initial_lost_rows: list[dict[str, object]] = []
         if html:
             table = _asset_table(html)
             if table is not None:
@@ -1020,11 +1072,16 @@ class EmlParser:
                 source_file=source_file,
                 source_id=source_id,
             )
+        fallback_body = (
+            f"{body}\n{html_text}"
+            if initial_lost_rows and html_text and html_text not in body
+            else body
+        )
         return (
             _fallback_case(
                 message,
                 subject,
-                body,
+                fallback_body,
                 source_file=source_file,
                 source_id=source_id,
                 initial_lost_rows=initial_lost_rows,
