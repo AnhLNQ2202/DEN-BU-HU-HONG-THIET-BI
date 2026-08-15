@@ -52,18 +52,18 @@ Snapshot hiện tại được cập nhật ngày **2026-08-16**:
 | Hạng mục | Giá trị tại snapshot |
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
-| Branch candidate hiện tại | `agent/tran-workspace-compact` |
-| Base `origin/main` | `84bbb2af8724d1262f5482facb3d268d038b571a` |
+| Runtime branch staging | `agent/react-trannnb-team-dev`, fast-forward cùng tree với `main` tại release commit |
+| Release commit đang live | `0358690e7b9aa3fcb42b9fc3177ce90fccbf4cc2` (merge PR [#13](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/13)) |
 | Outlook companion | PR [#7](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/7) đã merge; Add-in/Bridge đã được smoke public assets trên staging |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
 | Candidate local gate | 391 collected = 389 pass + 2 expected platform skips; Ruff/diff-check + production Docker build/container smoke pass |
 | Frontend candidate | 8 Node contract tests; Vite 51 modules; tracked dist regenerated |
-| Candidate deploy status | Chưa push/deploy tại thời điểm snapshot; M365 env vẫn chủ động để trống |
-| Release verdict | Local staging gate xanh; phải chờ GitHub CI Docker rồi mới Manual Deploy; chưa phải production multi-user |
+| Candidate deploy status | Render staging **Live** tại deploy `dep-da0d0gc9v7es7393qhrg`; M365 env vẫn chủ động để trống |
+| Release verdict | GitHub CI, Docker và smoke staging xanh; chưa phải production multi-user |
 
-Candidate hiện tại kế thừa parser/mail-identity/UI, fast-upload, DPI/toast và
+Release hiện tại kế thừa parser/mail-identity/UI, fast-upload, DPI/toast và
 multi-draft đã merge; thêm Tran workspace ba bước gọn, result card thu gọn và
 tên mail Local Bridge theo Subject cho các mail được lấy mới. Microsoft 365 cá
 nhân vẫn fail-closed cho đến khi có App Registration hợp lệ. User đã cho phép
@@ -1300,6 +1300,18 @@ Tran reference được tải thành công từ một phiên đã xác thực; a
 thuộc checklist operator ở trên. Mọi lần Manual Deploy/redeploy sau vẫn có thể
 xóa toàn bộ dữ liệu `/tmp/asset-hub-staging`, nên phải lấy xác nhận mới của user
 ngay trước thao tác.
+
+Ngày 2026-08-16, PR [#13](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/13)
+được merge thành commit `0358690e7b9aa3fcb42b9fc3177ce90fccbf4cc2`.
+GitHub CI của merge commit và của exact staging branch đều pass. Nhánh
+`agent/react-trannnb-team-dev` được fast-forward, sau đó Render Manual Deploy
+đúng **Deploy latest commit**, không clear build cache và không đổi env/plan.
+Deployment `dep-da0d0gc9v7es7393qhrg` chuyển **Live**. Smoke công khai xác nhận
+`GET /api/health` trả 200 với `{ok:true,service:"asset-compensation-hub"}`,
+`GET /` không credential trả 401 kèm Basic realm, và
+`GET /outlook-addin/taskpane.html` trả 200/no-store. Release này đưa Tran
+workspace ba bước và tên mail Local Bridge theo Subject lên staging; record cũ
+vẫn giữ filename đã ingest trước đó, chỉ mail được lấy mới mới có tên Subject.
 
 Cũng trong ngày 2026-08-15, user yêu cầu bật Draft Mail sau khi UI báo capability
 chưa sẵn sàng. Đối chiếu Render Environment xác nhận service hiện hữu thiếu
