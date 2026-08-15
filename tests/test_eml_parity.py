@@ -23,6 +23,16 @@ def _message(subject: str, body: str, *, message_id: str) -> bytes:
     return message.as_bytes()
 
 
+def _message_without_date(subject: str, body: str, *, message_id: str) -> bytes:
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = "Synthetic Asset Team <asset@example.invalid>"
+    message["To"] = "Synthetic Reviewer <reviewer@example.invalid>"
+    message["Message-ID"] = f"<{message_id}>"
+    message.set_content(body)
+    return message.as_bytes()
+
+
 def _lost_table_message(*, message_id: str = "multi-lost@example.invalid") -> bytes:
     message = EmailMessage()
     message["Subject"] = "IT - Thông tin tài sản thất lạc"
@@ -206,6 +216,129 @@ def test_ingestion_persists_all_cases_stably_and_marks_inactive_metadata(tmp_pat
         assert alpha.metadata["employee_inactive"] is True
         assert alpha.metadata["credit_components"][0]["amount"] == 600
         assert beta.metadata["supplier_lookup_status"] == "NOT_FOUND"
+    finally:
+        repository.close()
+
+
+def test_missing_date_retry_across_month_boundary_keeps_one_stable_case(
+    tmp_path,
+) -> None:
+    repository = SQLiteCaseRepository(tmp_path / "cases.sqlite3")
+    service = CaseService(repository)
+    payload = EmailPayload(
+        "synthetic-no-date.eml",
+        _message_without_date(
+            "IT - Thông tin tài sản hư hỏng",
+            """
+            Người dùng: demo.idempotent
+            Chi phí đền bù: 100000
+            Mã thiết bị: DEMO-LAP-777
+            """,
+            message_id="missing-date-stable@example.invalid",
+        ),
+    )
+    january = datetime(2026, 1, 31, 23, 59, tzinfo=UTC)
+    february = datetime(2026, 2, 1, 0, 1, tzinfo=UTC)
+    try:
+        first = ingest_eml_payloads(service, [payload], uploaded_at=january)
+        second = ingest_eml_payloads(service, [payload], uploaded_at=february)
+
+        assert len(first.cases) == len(second.cases) == 1
+        assert second.cases[0].id == first.cases[0].id
+        assert second.cases[0].received_at == january
+        assert len(service.list_cases()) == 1
+    finally:
+        repository.close()
+
+
+def test_exact_mime_with_new_transport_name_is_noop_after_accounting(
+    tmp_path,
+) -> None:
+    repository = SQLiteCaseRepository(tmp_path / "cases.sqlite3")
+    service = CaseService(repository)
+    data = _message(
+        "IT - Thông tin tài sản hư hỏng",
+        """
+        Người dùng: demo.accounted
+        Chi phí đền bù: 100000
+        Mã thiết bị: DEMO-LAP-778
+        """,
+        message_id="accounted-transport-retry@example.invalid",
+    )
+    try:
+        first = ingest_eml_payloads(
+            service,
+            [EmailPayload("upload-01.eml", data)],
+        )
+        case_id = first.cases[0].id
+        service.transition_status(
+            case_id,
+            "READY_FOR_ACCOUNTING",
+            actor="synthetic-reviewer",
+        )
+        accounted = service.transition_status(
+            case_id,
+            "ACCOUNTED",
+            actor="synthetic-reviewer",
+        )
+
+        repeated = ingest_eml_payloads(
+            service,
+            [EmailPayload("m365-ngan-02.eml", data)],
+        )
+
+        assert repeated.cases == (accounted,)
+        assert len(service.list_cases()) == 1
+        assert service.get_case(case_id).source_file == "upload-01.eml"
+    finally:
+        repository.close()
+
+
+def test_exact_mime_refreshes_supplier_data_before_accounting(tmp_path) -> None:
+    repository = SQLiteCaseRepository(tmp_path / "cases.sqlite3")
+    service = CaseService(repository)
+    data = _message(
+        "IT - Thông tin tài sản hư hỏng",
+        """
+        Người dùng: demo.refresh
+        Chi phí đền bù: 100000
+        Mã thiết bị: DEMO-LAP-779
+        """,
+        message_id="supplier-refresh@example.invalid",
+    )
+    inactive = {
+        "demo.refresh": SupplierRecord(
+            domain="demo.refresh",
+            supplier_number="SYN-OLD",
+            supplier_site="01",
+            active=False,
+        )
+    }
+    active = {
+        "demo.refresh": SupplierRecord(
+            domain="demo.refresh",
+            supplier_number="SYN-NEW",
+            supplier_site="02",
+            active=True,
+        )
+    }
+    try:
+        first = ingest_eml_payloads(
+            service,
+            [EmailPayload("upload-01.eml", data)],
+            supplier_directory=inactive,
+        )
+        refreshed = ingest_eml_payloads(
+            service,
+            [EmailPayload("m365-ngan-02.eml", data)],
+            supplier_directory=active,
+        )
+
+        assert refreshed.cases[0].id == first.cases[0].id
+        assert refreshed.cases[0].supplier_number == "SYN-NEW"
+        assert refreshed.cases[0].supplier_site == "02"
+        assert refreshed.cases[0].metadata["supplier_lookup_status"] == "ACTIVE"
+        assert refreshed.cases[0].source_file == "m365-ngan-02.eml"
     finally:
         repository.close()
 

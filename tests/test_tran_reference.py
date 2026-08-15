@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
+import asset_compensation.adapters.tran_reference_xlsx as reference_module
 from asset_compensation.adapters import (
     CcdcWorkbookIndex,
     FaGlWorkbookIndex,
@@ -140,3 +141,57 @@ def test_ccdc_reads_define_cmdb_and_oldest_warehouse_date(tmp_path: Path) -> Non
     assert service.classification.physical is False
     assert index.earliest_start_date("ADA10001") == date(2023, 7, 2)
 
+
+def test_reference_workbooks_reject_sparse_sheets_beyond_row_ceiling(
+    tmp_path: Path,
+) -> None:
+    fa_path = make_fa_gl(tmp_path / "sparse-fa.xlsx", {})
+    workbook = reference_module.load_workbook(fa_path)
+    workbook["VNG-Asset"].cell(
+        reference_module.MAX_REFERENCE_ROWS_PER_SHEET + 1,
+        16,
+        "SYNTHETIC",
+    )
+    workbook.save(fa_path)
+    workbook.close()
+    with pytest.raises(TranReferenceError, match="row safety limit"):
+        FaGlWorkbookIndex.from_path(fa_path)
+
+    ccdc_path = make_ccdc(tmp_path / "sparse-ccdc.xlsx")
+    workbook = reference_module.load_workbook(ccdc_path)
+    workbook["Define"].cell(
+        reference_module.MAX_REFERENCE_ROWS_PER_SHEET + 1,
+        2,
+        "SYN",
+    )
+    workbook.save(ccdc_path)
+    workbook.close()
+    with pytest.raises(TranReferenceError, match="row safety limit"):
+        CcdcWorkbookIndex.from_path(ccdc_path)
+
+
+def test_reference_record_and_text_limits_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fa_path = make_fa_gl(
+        tmp_path / "bounded-fa.xlsx",
+        {"VNG-Asset": [{"tag": "LAP10001"}, {"tag": "LAP10002"}]},
+    )
+    monkeypatch.setattr(reference_module, "MAX_FA_RECORDS", 1)
+    with pytest.raises(TranReferenceError, match="indexed-record"):
+        FaGlWorkbookIndex.from_path(fa_path)
+
+    monkeypatch.setattr(reference_module, "MAX_FA_RECORDS", 200_000)
+    long_tag = "X" * (reference_module.MAX_REFERENCE_TAG_CHARS + 1)
+    long_tag_path = make_fa_gl(
+        tmp_path / "long-tag-fa.xlsx",
+        {"VNG-Asset": [{"tag": long_tag}]},
+    )
+    with pytest.raises(TranReferenceError, match="safe text limit"):
+        FaGlWorkbookIndex.from_path(long_tag_path)
+
+    ccdc_path = make_ccdc(tmp_path / "bounded-ccdc.xlsx")
+    monkeypatch.setattr(reference_module, "MAX_CCDC_RECORDS", 1)
+    with pytest.raises(TranReferenceError, match="indexed-record"):
+        CcdcWorkbookIndex.from_path(ccdc_path)

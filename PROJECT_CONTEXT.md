@@ -18,11 +18,14 @@ sản IT bị hư hỏng hoặc thất lạc. Product thay thế chuỗi script 
 bằng một workflow có trạng thái, audit, kiểm tra dữ liệu và output có kiểm soát:
 
 1. Upload Supplier Active + Inactive.
-2. Upload email `.eml`; parser có thể tạo nhiều hồ sơ từ một email.
+2. Upload email `.eml` hoặc, khi cấu hình Microsoft 365, kết nối mailbox riêng
+   cho từng vai trò và sync email mới từ đúng một folder đã chọn; parser có thể
+   tạo nhiều hồ sơ từ một email.
 3. Review hồ sơ `DAMAGED`/`LOST`, cảnh báo và trạng thái.
 4. Với NganTLT: xuất batch hạch toán theo template gốc và ghép PDF chứng từ.
 5. Với TranNNB: upload FA&GL/CCDC, resolve tài sản, tính đền bù, xuất workbook
-   cùng sheet `Sent out`, tạo draft mail chưa gửi và tạo/ghép PDF.
+   cùng sheet `Sent out`, tạo draft mail chưa gửi dưới dạng `.eml` hoặc Reply-All
+   trực tiếp trong Outlook qua Graph, và tạo/ghép PDF.
 6. Lưu workflow/audit trong SQLite; file nguồn và output không phải database.
 
 Kiến trúc hiện tại:
@@ -35,6 +38,7 @@ flowchart LR
     SVC --> DB["SQLite repository"]
     SVC --> PARSER["EML and Supplier parsers"]
     SVC --> FILES["Excel, EML draft and PDF adapters"]
+    SVC --> M365["Optional Microsoft Graph\nexact-folder sync + Outlook draft"]
     FILES --> WORD["Microsoft Word on Windows"]
     FILES --> WEASY["WeasyPrint on Linux/Render"]
 ```
@@ -47,19 +51,30 @@ Snapshot này được lập ngày **2026-08-15**:
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
 | Branch tích hợp | `agent/react-trannnb-team-dev` |
-| Commit template/Draft Mail đã publish | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
-| `main` tại snapshot | `c8807c830e46f588990bd2aeb222c2946dc849aa` |
-| Draft PR hiện tại | [PR #5](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/5) |
+| Commit feature template/Draft Mail | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
+| Commit feature M365/Tran performance | `a69978f2ad6db0d399c6ce815449cd54c7502a98` |
+| Commit đã CI và đang live trên Render | `cfa1dd05bf9209939b3dddda5e04efe5e4859253` |
+| `main` tại snapshot | `58794f42955ceb396a254dedac60ceeda3ac1ce1` |
+| PR feature | [PR #5](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/5), đã merge |
+| Draft PR M365/Tran performance | [PR #6](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/6) |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Render deploy quan sát gần nhất | `e67f08b`; thay đổi `9e17959` **chưa deploy** tại snapshot |
+| Render deploy quan sát gần nhất | Environment rebuild `cfa1dd0`, trạng thái **live** lúc 2026-08-15 16:00 GMT+7 |
 | Health | `/api/health` trả `200`; `/` không có auth trả `401` |
-| CI | Hai check `quality` của PR #5 trên exact commit đều `SUCCESS` |
-| CI Linux exact commit | 251 test pass, 85% statement coverage |
-| QA Windows độc lập | 249 pass, 2 skip theo capability/privilege môi trường |
-| Frontend | Vite build ổn định, 47 modules |
-| Release verdict | Đủ điều kiện staging; chưa phải production multi-user |
+| CI current candidate | Hai check `quality` của PR #6 trên `a69978f` đều `SUCCESS` |
+| CI Linux current candidate | 328 test pass trong 27,42 giây, 85% statement coverage; Docker + GreenNode Compose green |
+| QA Windows current candidate | 326 pass, 2 skip theo capability/privilege môi trường; 84% coverage |
+| Frontend current candidate | Vite build ổn định, 48 modules |
+| Release verdict | Đủ điều kiện staging sau UAT; chưa phải production multi-user |
+
+> **Release candidate M365/Tran performance đã được push lên branch
+> `agent/react-trannnb-team-dev` tại commit `a69978f`.** Local final gate: Ruff
+> pass; 328 tests collected, 326 pass + 2 expected platform skips; coverage 84%;
+> Vite 48 modules và hai lần build byte-for-byte ổn định. Linux CI của exact
+> feature commit pass 328 tests, 85% coverage, production Docker build và
+> GreenNode Compose validation. Release mới **chưa được deploy Render**; phải hỏi
+> lại user ngay trước redeploy vì `/tmp` staging sẽ mất dữ liệu.
 
 Các giá trị trên là snapshot, không phải chân lý vĩnh viễn. AI mới phải kiểm tra
 lại bằng các lệnh ở mục 2.
@@ -149,7 +164,8 @@ không yêu cầu.
 - Không dynamic-import script tùy ý và không dựa vào marker stdout subprocess.
 - GET không được mutate `case_log.xlsx` hoặc filesystem.
 - Không chọn Supplier/reference bằng glob “file đầu tiên”.
-- Không scan mọi Outlook mailbox và không tự gửi mail.
+- Không scan mọi Outlook mailbox: mỗi role OAuth riêng chỉ sync đúng một folder
+  đã chọn. Không request `Mail.Send`, không có Graph `/send` và không tự gửi mail.
 - Không chèn raw HTML vào mail.
 - PDF overflow mặc định fail; chỉ cắt khi user chọn rõ `warn`, và phải trả warning.
 - Dữ liệu thiếu/không rõ trả `NEEDS_REVIEW`; không đoán physical, lookup, cost,
@@ -162,8 +178,8 @@ không yêu cầu.
 
 | Vai trò | Công việc chính |
 | --- | --- |
-| NganTLT/accounting operator | Nạp Supplier + email, review case, tạo batch hạch toán, tải workbook, tạo/ghép PDF chứng từ |
-| TranNNB/compensation operator | Nạp email + FA&GL/CCDC, xác minh classification, tính đền bù, xuất workbook/`Sent out`, tạo draft và PDF |
+| NganTLT/accounting operator | Nạp Supplier + email bằng upload hoặc mailbox OAuth riêng (`Mail.Read`), review case, tạo batch hạch toán, tải workbook, tạo/ghép PDF chứng từ |
+| TranNNB/compensation operator | Nạp email bằng upload hoặc mailbox OAuth riêng (`Mail.ReadWrite`), nạp FA&GL/CCDC, xác minh classification, tính đền bù, xuất workbook/`Sent out`, tạo draft `.eml`/Outlook và PDF |
 | Reviewer | Xử lý cảnh báo, chuyển trạng thái, kiểm tra audit và output |
 | Team developer/tester | Chạy local/devcontainer/Compose hoặc staging bằng fixture synthetic |
 | Hackathon judge | Xem dashboard staging qua Basic Auth; không có quyền riêng theo vai trò trong MVP |
@@ -174,6 +190,7 @@ không yêu cầu.
 flowchart TD
     SUP["Upload Supplier Active + Inactive"] --> DIR["Validate, normalize, exclude collisions, atomic activate"]
     EML["Upload 1-20 EML"] --> PARSE["Validate MIME and parse_many"]
+    M365["Ngan OAuth Mail.Read\nselect one folder + sync created mail"] --> PARSE
     DIR --> ENRICH["Supplier enrichment"]
     PARSE --> ENRICH
     ENRICH --> CASES["SQLite cases + warnings + audit"]
@@ -188,8 +205,10 @@ flowchart TD
 Thứ tự vận hành:
 
 1. Upload đúng một file Active và một file Inactive.
-2. Upload `.eml`. Một EML có thể sinh nhiều case; các case cùng email dùng chung
-   opaque retained handle khi retention bật.
+2. Upload `.eml`, hoặc kết nối account Ngan Microsoft 365 và chọn đúng một folder
+   rồi sync. Một EML có thể sinh nhiều case; các case cùng email dùng chung opaque
+   retained handle khi retention bật. Sync Graph vẫn chạy qua validator/parser/
+   Supplier enrichment hiện có; không có parser riêng dễ lệch rule.
 3. Review warnings và dữ liệu case. UI chỉ cho transition theo policy backend.
 4. Chuyển case hợp lệ sang `READY_FOR_ACCOUNTING`.
 5. Chọn case, nhập batch dạng `GN2ddmmyy`, actor và `invoice_start` từ 0 đến
@@ -203,7 +222,7 @@ Thứ tự vận hành:
 
 ```mermaid
 flowchart TD
-    EML["Upload EML and retain source"] --> ASSETS["One or many LOST assets from same mail"]
+    EML["Upload EML or sync exact Tran folder\nand retain source"] --> ASSETS["One or many LOST assets from same mail"]
     REF["Upload FA&GL + optional CCDC"] --> INDEX["Safe workbook indexes"]
     ASSETS --> RESOLVE["TranWorkflowService.resolve_many"]
     INDEX --> RESOLVE
@@ -211,13 +230,17 @@ flowchart TD
     RESOLVE -->|all ready| CALC["Compensation calculation"]
     CALC --> WB["New Tran workbook + Sent out"]
     WB --> DRAFT["Unsent reply-all .eml draft"]
+    WB --> ODRAFT["Optional Graph createReplyAll\nattach workbook; never send"]
     EML --> PDF["Individual/batch PDF evidence"]
 ```
 
 Chi tiết:
 
-1. Upload EML ở phân hệ TranNNB. UI chọn một case sẽ tự nhóm các case có cùng
-   source EML thành danh sách editable 1–100 tài sản.
+1. Upload EML ở phân hệ TranNNB, hoặc kết nối account Tran Microsoft 365 và sync
+   đúng một folder. UI chọn một mail nguồn sẽ tự nhóm các case có cùng retained
+   EML và bung từng `metadata.asset_rows` thành danh sách 1–100 tài sản. Một case
+   LOST cùng domain có thể đại diện nhiều dòng tài sản, không được coi một case
+   luôn tương đương một tài sản.
 2. Upload một FA&GL `.xlsx`; CCDC `.xlsx` là optional. Managed upload ưu tiên
    hơn path external cấu hình bằng env.
 3. Resolve từng tài sản. UI chỉ prefill trường thật sự có trong parser metadata;
@@ -236,8 +259,45 @@ Chi tiết:
    `Dear all` hoặc câu mẫu. Mail nguồn được quote bên dưới dưới dạng text đã escape,
    tối đa 100.000 ký tự; HTML chủ động, form, script và tài nguyên từ xa của mail
    nguồn không được đưa nguyên trạng vào draft.
-7. Cùng retained EML có thể dùng cho PDF. Draft của một nhóm nhiều tài sản chỉ
-   cho phép khi mọi dòng dùng cùng source handle.
+7. Khi account Tran đã kết nối, product còn có thể đọc exact `Message-ID` từ EML
+   đã retain, tìm **đúng một** message trong mailbox `/me`, gọi Graph
+   `createReplyAll`, prepend intro đã escape + cùng bảng Tran, attach workbook mới
+   và trả Outlook web link đã allowlist. Nếu update/attach lỗi, service cố xóa
+   draft tạm và báo rõ khi rollback không chắc chắn. Quyền là `Mail.ReadWrite`
+   vì Graph cần nó để tạo draft; product không xin `Mail.Send` và không gửi.
+8. Cùng retained EML có thể dùng cho PDF. Draft của một nhóm nhiều tài sản chỉ
+   cho phép khi mọi dòng dùng cùng source handle. Mỗi asset draft mang binding
+   `{case_id, source_row_index}`; `case_id` được lặp với row index khác nhau,
+   nhưng composite không được trùng. Server đối chiếu Tag/Domain với đúng dòng
+   nguồn, còn UI khóa hai field này; case `ACCOUNTED/CLOSED` không được tạo output
+   draft mới.
+
+### 4.4 Hợp đồng Microsoft 365 chung cho hai vai trò
+
+- Một browser session có **hai token cache độc lập**; Connect luôn dùng account
+  chooser để Ngan và Tran có thể chọn hai email khác nhau trong cùng tenant.
+- Ngan xin đúng delegated `Mail.Read`; Tran xin đúng `Mail.ReadWrite`. Không có
+  `Mail.Send`, shared mailbox, application permission, cross-tenant hoặc send API.
+- Graph dùng `/me`, vì vậy mỗi connection chỉ truy cập mailbox của account đang
+  đăng nhập. MVP không hỗ trợ shared mailbox/delegated mailbox khác.
+- Mỗi role chọn một exact folder. First sync chỉ lấy created messages trong 30
+  ngày gần nhất; sau đó dùng folder delta cursor. Mỗi request đúng một bounded
+  delta page, tối đa 10 mail, 2 MiB/mail và 25 MiB tổng; `has_more=true` yêu cầu
+  sync tiếp. Moved/deleted 404, MIME quá 2 MiB và MIME invalid được skip
+  count-only, không fallback ra ngoài folder và không poison cursor.
+- Khi bất kỳ case từ một exact MIME đã `ACCOUNTED/CLOSED`, MIME đó là idempotent
+  no-op dù tên file vận chuyển thay đổi giữa các lần Graph sync; provenance đã
+  hạch toán được giữ nguyên. Trước khi hạch toán, re-ingest vẫn refresh Supplier
+  và parser-owned fields. Cùng Message-ID nhưng bytes khác luôn fail closed.
+- UI có opt-in auto-sync 5 phút chỉ khi dashboard tab đang mở và visible, mặc
+  định tắt. Đây là browser timer; server báo `background_sync:false` và không có
+  worker/webhook/subscription nền.
+- OAuth session, MSAL token cache, selected folder và delta cursor chỉ ở process
+  memory. Session có absolute TTL 8 giờ, OAuth flow 10 phút, tối đa 512 browser
+  sessions; restart/redeploy/multi-worker làm mất state và phải reconnect/reselect.
+- Disconnect xóa state local của đúng role, không revoke Entra consent. Authorized
+  test reset xóa **mọi** M365 session/cursor in-memory cùng dữ liệu staging.
+- Chi tiết Entra/Render/API/error/safety ở `docs/MICROSOFT_365.md`.
 
 ## 5. Kiến trúc và bản đồ source
 
@@ -268,7 +328,9 @@ Chi tiết:
 | `src/asset_compensation/services/tran_workflow_service.py` | Reference resolution + calculation orchestration |
 | `src/asset_compensation/services/accounting_policy.py` | Semantic policy key → configured account mapping |
 | `src/asset_compensation/services/supplier_upload_service.py` | Safe Supplier version upload/activation |
-| `src/asset_compensation/services/tran_reference_upload_service.py` | Safe FA&GL/CCDC version upload/activation |
+| `src/asset_compensation/services/tran_reference_upload_service.py` | Safe FA&GL/CCDC version upload/activation + bounded generation-consistent index cache |
+| `src/asset_compensation/services/m365_auth_service.py` | Role/session-isolated MSAL cache, OAuth, folder selection và bounded delta collection |
+| `src/asset_compensation/services/m365_mail_service.py` | Graph MIME → existing ingestion pipeline; Outlook Reply-All draft orchestration/rollback |
 | `src/asset_compensation/services/mail_artifact_service.py` | Optional content-addressed EML retention |
 | `src/asset_compensation/services/mail_pdf_service.py` | Atomic individual/batch PDF orchestration |
 | `src/asset_compensation/services/test_data_service.py` | Scoped disposable staging cleanup |
@@ -279,6 +341,8 @@ Chi tiết:
 | `src/asset_compensation/adapters/tran_reference_xlsx.py` | FA&GL and CCDC indexes |
 | `src/asset_compensation/adapters/tran_workbook.py` | Tran year sheet + `Sent out` exporter |
 | `src/asset_compensation/adapters/tran_mail.py` | Escaped HTML table and unsent EML draft |
+| `src/asset_compensation/adapters/m365_contract.py` | Shared Graph/Outlook body hard limits |
+| `src/asset_compensation/adapters/m365_graph.py` | Strict allowlisted Graph HTTP boundary; không generic request/send method |
 | `src/asset_compensation/adapters/pdf.py` | EML sanitizer, Word/Weasy converters, pypdf normalization/merge |
 | `src/asset_compensation/repositories/sqlite_repository.py` | Schema, WAL, transactions, immutable accounted cases |
 | `src/asset_compensation/web/app.py` | Flask app factory, auth, headers, dependency wiring |
@@ -290,6 +354,7 @@ Chi tiết:
 | `frontend/src/components/UploadWorkspace.jsx` | Supplier + EML upload, progress/cancel/reset state |
 | `frontend/src/components/TaskWorkspace.jsx` | NganTLT accounting and PDF workspace |
 | `frontend/src/components/TranWorkspace.jsx` | Multi-asset Tran reference/resolve/export/draft UI |
+| `frontend/src/components/M365MailboxPanel.jsx` | Role account/folder/manual sync + visible-tab 5-minute opt-in auto-sync |
 | `frontend/src/components/MailPdfPanel.jsx` | Artifact selection and individual/batch PDF UI |
 | `frontend/src/components/CaseTable.jsx` | Filtered case table and selection |
 | `frontend/src/components/CaseDrawer.jsx` | Detail, metadata and status audit timeline |
@@ -375,6 +440,10 @@ Mặc định local là `var/`; cloud lấy từ `ASSET_HUB_DATA_DIR`:
 
 Cleanup chỉ được xóa managed paths/patterns mà app sở hữu. Không recurse vào
 workspace cha, inbox bên ngoài, template external hoặc file lạ.
+
+Microsoft 365 token cache/folder/delta cursor **không nằm trong layout này** và
+không persist vào SQLite/file/cookie. Cookie chỉ chứa opaque 43-character session
+ID; state/tokens/cursors ở memory và bị drop khi process restart hoặc test clear.
 
 ## 7. Business rules chi tiết
 
@@ -512,6 +581,25 @@ workspace để certification production; cần UAT với file tổ chức đã 
 - Omit CCDC để giữ current; gửi exact `clear_ccdc=true` để bỏ managed CCDC ở
   version mới.
 - External env references là read-only; managed upload được ưu tiên.
+- CCDC read-only parser dùng bounded one-pass `iter_rows(values_only=True)` cho
+  header/data thay vì gọi `ReadOnlyWorksheet.cell()` lặp lại. Cách cũ khiến
+  openpyxl reparse stream nhiều lần và thể hiện O(n²)-like slowdown ở file lớn.
+- `TranReferenceUploadService` giữ tối đa một generation FA&GL + CCDC đã validate
+  trong memory. Upload managed thành công prime đúng index vừa validate; upload
+  lỗi giữ generation trước; clear invalidates; các route resolve/export dùng
+  cùng service cache thay vì parse workbook lại mỗi action.
+- External fallback được key bằng resolved path + stat signature và kiểm cả cặp
+  trước/sau load. Cache chỉ publish khi FA&GL/CCDC cùng ổn định, nên thay file giữa
+  hai load không thể tạo mixed generation; concurrent miss được single-flight bởi
+  service lock.
+- Mỗi reference sheet bị chặn ở 200.000 rows; tổng scan FA&GL và CCDC riêng bị
+  chặn ở 300.000 rows, mỗi index tối đa 200.000 records. Tag tối đa 255 ký tự và
+  text reference tối đa 1.024 ký tự. Các ceiling này cao hơn nhiều snapshot vận
+  hành đã audit nhưng chặn sparse-sheet 1.048.576 rows và cache phình vô hạn trên
+  worker 512 MiB.
+- Benchmark **synthetic** 600 CCDC rows trên máy dev giảm từ 20.417 giây xuống
+  0.073 giây, xấp xỉ 280×. Đây là bằng chứng diagnostic cho hotspot đã sửa,
+  không phải SLA hoặc cam kết tốc độ với mọi workbook/máy.
 
 ### 7.5 PDF evidence
 
@@ -530,6 +618,9 @@ Pipeline:
 6. `PypdfMerger` merge mọi normalized page.
 7. Service stage toàn bộ batch rồi atomic publish; lỗi giữa chừng không để batch
    nửa vời và không overwrite.
+8. Tên file tạm của Word/WeasyPrint/normalizer/merger và thư mục staging đều có
+   prefix ngắn, bounded; tên output cuối vẫn giữ nguyên contract. Điều này tránh
+   lặp lại tên batch dài và chạm giới hạn đường dẫn trên máy Windows của team.
 
 Bounds/API:
 
@@ -564,12 +655,20 @@ với `capability_available:false`.
 | POST | `/api/suppliers/upload` | Multipart Active + Inactive; header `supplier-v1` |
 | POST | `/api/emails/upload` | Multipart repeated `files`; header `email-v1`; ingest ngay |
 | POST | `/api/ingest` | Legacy explicit server inbox ingestion |
+| GET | `/api/m365/<role>/status` | `ngan|tran`; configured/account/folder/cursor, storage `memory`, background false |
+| POST | `/api/m365/<role>/connect` | Start role-specific auth code flow; optional same-origin `return_to`; set opaque HttpOnly cookie |
+| GET | `/api/m365/callback` | One-time state/token exchange + 303; intentional Basic Auth exception, no-store/no-referrer |
+| POST | `/api/m365/<role>/disconnect` | Clear đúng role token/folder/cursor; header `m365-disconnect-v1` |
+| GET | `/api/m365/<role>/folders` | Bounded visible nested folder list with explicit path |
+| POST | `/api/m365/<role>/folder` | Select exactly one returned folder; reset role cursor |
+| POST | `/api/m365/<role>/sync` | One-page/10-message created delta/MIME ingest; count-only skip fields; header `m365-sync-v1` |
 | GET | `/api/tran/references/status` | FA&GL/CCDC availability/source type |
 | POST | `/api/tran/references/upload` | FA&GL + optional CCDC; header `tran-reference-v1` |
 | POST | `/api/tran/resolve` | Resolve/calculation 1–100 assets, read-only result |
 | POST | `/api/tran/workbooks` | Export new Tran workbook; returns opaque output ID |
 | GET | `/api/tran/workbooks/<output_id>/download` | Private/no-store workbook download |
-| POST | `/api/tran/drafts` | Export workbook + unsent Reply-All `.eml` |
+| POST | `/api/tran/drafts` | Export workbook + unsent Reply-All `.eml`; bind từng asset bằng `{case_id, source_row_index}` với retained handle |
+| POST | `/api/tran/outlook-drafts` | Export workbook + create unsent Outlook Graph Reply-All draft; cùng row-level binding; never send |
 | GET | `/api/tran/drafts/<output_id>/download` | Private/no-store draft download |
 | GET | `/api/mail-artifacts/<handle>/download` | Verified retained EML download |
 | POST | `/api/mail-pdfs/individual` | Render one EML to PDF |
@@ -596,8 +695,23 @@ Payload quan trọng được định nghĩa chi tiết ở:
 
 - `docs/UPLOAD_API.md` — multipart fields, size/schema limits, collision/reset;
 - `docs/TRAN_API.md` — capabilities, reference/resolve/workbook/draft/PDF;
+- `docs/MICROSOFT_365.md` — Entra OAuth, permissions, folder sync, Outlook draft,
+  error/limit/security contract;
 - `docs/COMPENSATION_PREVIEW_API.md` — preview request/result/status;
 - `docs/MAIL_ARTIFACTS_AND_PDF.md` — low-level retention/render/merge contract.
+
+M365 capability flags là `m365_configured`, `m365_ngan`, `m365_tran` và
+`tran_outlook_draft`; cả bốn fail closed khi config/dependency thiếu. Mọi
+`/api/m365/**` và `/api/tran/outlook-drafts` response dùng
+`Cache-Control: private, no-store`. HTTP errors: 401 có
+`reconnect_required:true`, 503 có `capability_available:false`, provider bounded
+failure là sanitized 502.
+
+Sync response phân biệt `fetched_count` (MIME thực sự lấy được), `ingested` (case
+mới), `case_ids` (case trả về, có thể gồm duplicate đã tồn tại), `has_more`/
+`cursor_ready` và ba count data-minimized: `unavailable_count`,
+`oversized_count`, `invalid_mime_count`. Không đưa Graph ID/folder/subject/
+provider body của item bị skip ra client.
 
 Không thêm endpoint gửi email. Không trả server filesystem path cho client. ID
 download phải opaque và path phải được resolve dưới managed root.
@@ -628,8 +742,11 @@ download phải opaque và path phải được resolve dưới managed root.
 - `UploadWorkspace.jsx`: Supplier and EML file selection, client-side bounds,
   XHR progress, cancel, warnings/results, reset nonce.
 - `TaskWorkspace.jsx`: Ngan controls, accounting export and PDF panel.
-- `TranWorkspace.jsx`: reference status/upload, grouped multi-asset forms,
-  resolve results, workbook/draft download.
+- `TranWorkspace.jsx`: reference status/upload, group theo retained EML, bung
+  `asset_rows` thành row-bound multi-asset forms, resolve results và
+  workbook/local draft/Outlook draft actions.
+- `M365MailboxPanel.jsx`: reusable Ngan/Tran account status, Connect/Disconnect,
+  exact-folder selection, manual sync, 5-minute visible-tab auto-sync opt-in.
 - `MailPdfPanel.jsx`: dedupe artifact handles, select max 20, page/overflow mode,
   individual/batch progress, warnings/downloads.
 - `BatchDialog.jsx`: batch/actor/`invoice_start` input and transition-safe UX.
@@ -639,6 +756,13 @@ download phải opaque và path phải được resolve dưới managed root.
 State từ upload/reset phải được clear sau successful test reset; cancel/failure
 không được giả vờ xóa. Tran exact cost được gửi dạng trimmed decimal string để
 không mất precision qua JavaScript `Number`.
+
+Hai `M365MailboxPanel` luôn được mount trong workspace tương ứng và giữ state
+role-scoped. Auto-sync mặc định off; localStorage chỉ lưu boolean opt-in theo
+role, không lưu account/token/folder/PII. Interval không chạy khi tab hidden và
+không overlap request. 401/503, disconnect hoặc test reset tắt opt-in. Frontend
+chỉ redirect OAuth tới exact HTTPS `login.microsoftonline.com` và chỉ mở web link
+draft ở allowlist Outlook HTTPS; API request dùng same-origin credentials.
 
 ## 10. Output templates và file formats
 
@@ -673,6 +797,10 @@ không mất precision qua JavaScript `Number`.
   8 px, alignment theo cột và Total bold với tổng G/H/I.
 - Draft attach workbook mới, giữ Reply-All/thread headers, quote source thành inert
   text có giới hạn và không gửi. `body_intro` bắt buộc do operator cung cấp.
+- Outlook Graph variant dùng exact retained `Message-ID`, yêu cầu đúng một
+  message, gọi `createReplyAll`, prepend intro/table vào quoted body do Outlook
+  tạo và attach workbook trực tiếp dưới 2.8 MB. Nếu Graph không trả web link an
+  toàn, draft vẫn có thể đã tạo nhưng UI không mở link trực tiếp. Không có send.
 
 ### 10.3 Macro/security boundary
 
@@ -759,12 +887,23 @@ Render/GreenNode dashboard. `.env.example` là reference synthetic.
 | `ASSET_HUB_TRAN_TEMPLATE` | built-in clean template | External approved Tran template |
 | `ASSET_HUB_RETAIN_RAW_EML` | `false` | Bắt buộc cho source download/draft/PDF |
 | `ASSET_HUB_DRAFT_FROM_ADDRESS` | unset | Sender cho generated unsent draft |
+| `ASSET_HUB_M365_TENANT_ID` | unset | Tenant-specific GUID/domain; reject `common`/`organizations`/`consumers` |
+| `ASSET_HUB_M365_CLIENT_ID` | unset | Entra confidential Web app client GUID |
+| `ASSET_HUB_M365_CLIENT_SECRET` | unset | Secret runtime-only, bị ẩn khỏi settings repr; không log/commit |
+| `ASSET_HUB_M365_REDIRECT_URI` | unset | Exact `/api/m365/callback`; HTTPS cloud hoặc HTTP loopback local |
 | `PORT` | platform/10000 Docker fallback | Gunicorn bind port trên Render/container |
 | `GUNICORN_THREADS` | deployment-specific | 2 trên Free staging, 4 trên paid/GreenNode sample |
 | `GUNICORN_TIMEOUT` | `120` deploy sample | Synchronous export timeout |
 
 Không dùng default demo GL cho hạch toán thật. Nếu `PREPAYMENT_GL` không set thì
 DAMAGED/LOST debit fallback phải đồng nhất; config không nhất quán phải fail.
+
+M365 chỉ configured khi **đủ và hợp lệ cả bốn biến** cùng dependencies `msal` +
+`requests`; partial config fail closed. Docker cài optional extra `m365`.
+`render.staging.yaml` khai báo exact callback hiện tại và ba secret
+tenant/client/client-secret bằng `sync:false`. Entra app phải đăng ký delegated
+`Mail.Read` + `Mail.ReadWrite`, không thêm `Mail.Send`; runtime sẽ request scope
+nhỏ hơn theo role. Xem setup từng bước ở `docs/MICROSOFT_365.md`.
 
 ## 12. Security, privacy và deletion boundaries
 
@@ -789,6 +928,29 @@ DAMAGED/LOST debit fallback phải đồng nhất; config không nhất quán ph
 - Mutating routes serialized để batch/upload/clear không để orphan artifacts.
 - Cases đã accounted/closed immutable; batch membership unique.
 - `.gitignore`/`.dockerignore` chặn evidence, Office, database, env và output.
+- M365 dùng auth-code flow tenant-specific với MSAL confidential client. Cookie
+  chỉ là opaque SID, `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` theo configured
+  HTTPS redirect; token/refresh token không vào cookie/SQLite/file/log/API.
+- OAuth state one-time 10 phút, return path same-origin, session absolute 8 giờ,
+  tối đa 512. Callback query bounded; response 303 no-store/no-referrer và không
+  echo code/state/provider detail.
+- Gunicorn access log chỉ ghi URL path bằng atom `%(U)s`, không ghi query string,
+  nên callback code/state đã dùng không bị lưu trong access log operator.
+- Shared Basic Auth áp dụng cho mọi M365 route **trừ callback**. Exception này là
+  intentional vì cross-site return từ Entra không luôn mang cached Basic
+  credential; callback vẫn buộc opaque SameSite cookie + one-time state.
+- Graph client chỉ cho exact HTTPS `graph.microsoft.com` method/path allowlist,
+  TLS verify, no redirects, connect/read timeout và bounded response. Không có
+  generic public request hoặc send method; continuation URL bị khóa đúng path/
+  query; provider error/token/object ID bị sanitize.
+- Folder sync chỉ GET MIME qua path có selected folder, không fallback `/me`
+  khi message moved/deleted; không mark read/move/delete. Cursor chỉ commit sau
+  ingestion. Outlook draft partial failure có rollback và uncertainty response.
+- Rollback private EML thất bại trả provider error về cleanup thay vì bị nuốt;
+  test-data clear vẫn quét managed hash. Draft local/Outlook bắt buộc row-level
+  `source_bindings`; mỗi composite `(case_id, source_row_index)` phải duy nhất,
+  LOST, chưa `ACCOUNTED/CLOSED`, cùng retained handle và Tag/Domain phải khớp
+  dữ liệu nguồn phía server.
 
 ### 12.2 Điều chưa phải production security
 
@@ -796,6 +958,9 @@ DAMAGED/LOST debit fallback phải đồng nhất; config không nhất quán ph
   per account.
 - Flask/Gunicorn xử lý export đồng bộ; chưa có queue/resource quota per user.
 - SQLite + local filesystem chỉ phù hợp một instance.
+- M365 token/folder/cursor memory-only không phù hợp multi-worker/instance, không
+  survive restart và chưa có encrypted persistence, server background worker,
+  webhook subscription lifecycle hoặc account-level revocation UI.
 - Chưa có managed object storage, retention policy theo ngày, KMS, formal backup,
   antivirus/DLP pipeline hoặc SIEM.
 - Hackathon staging chỉ dùng fixture synthetic/đã ẩn danh. Ephemeral filesystem
@@ -810,6 +975,9 @@ với header `X-Asset-Hub-Action: clear-test-data-v1` và exact JSON
 `{"confirm":"CLEAR_TEST_DATA"}`. Nó xóa DB records và chỉ những Supplier/Tran/
 EML/PDF/output managed đã validate. Nó không xóa inbox, external template/ref,
 orphan/unknown file hoặc workspace cha. Mutation lock serialize nó với export.
+Nó cũng drop toàn bộ M365 session/token cache/folder/delta cursor đang ở memory;
+mọi tester phải reconnect sau reset. Disconnect một role chỉ drop state role đó
+và không revoke consent đã cấp trong Entra.
 
 DB và nhiều filesystem store không thể nằm trong một transaction duy nhất; clear
 gọi các bước theo thứ tự và có thể dừng giữa chừng nếu I/O lỗi. Đây là trade-off
@@ -896,11 +1064,25 @@ managed DB và object storage trước.
 - draft sender synthetic `operator@example.invalid`;
 - Basic Auth user `judge`, password `sync:false` secret trong dashboard;
 - 2 Gunicorn threads, 120-second timeout;
-- Docker gồm React build, Flask/Gunicorn, WeasyPrint 68, pypdf, Pango và DejaVu.
+- Docker gồm React build, Flask/Gunicorn, WeasyPrint 68, pypdf, Pango, DejaVu,
+  MSAL và Requests.
+
+Blueprint hiện khai báo callback
+`https://asset-compensation-hub-staging.onrender.com/api/m365/callback` cùng ba
+M365 secret env `sync:false`. Trước khi bật, operator phải tạo tenant-specific
+Entra Web app, đăng ký callback khớp tuyệt đối, thêm delegated `Mail.Read` và
+`Mail.ReadWrite` nhưng không `Mail.Send`, rồi set tenant/client/secret trong
+Render. Hai account phải thuộc tenant đó và Graph `/me` chỉ hỗ trợ own mailbox;
+shared mailbox chưa có. Restart/redeploy buộc reconnect/reselect vì OAuth state,
+tokens và cursors đều memory-only. Giữ đúng một Gunicorn worker.
 
 Free instance ngủ khi idle; cold start có thể hơn 50 giây. Restart/redeploy có thể
 mất toàn bộ SQLite, refs, EML và output. Đây là staging dùng một lần, không phải
 bug persistence. Không upload dữ liệu thật.
+
+Release candidate M365/performance được mô tả trong file này **chưa live** tại
+snapshot tài liệu. Không Manual Deploy chỉ vì đã push branch; user phải xác nhận
+lại việc mất dữ liệu staging ngay trước mỗi rebuild/deploy mới.
 
 Hậu deploy tối thiểu:
 
@@ -919,14 +1101,36 @@ Checklist authenticated:
 4. Upload Supplier + EML synthetic.
 5. Tạo individual PDF, merged PDF và mở bằng PDF reader.
 6. Upload FA&GL/CCDC synthetic, resolve/export/draft.
-7. Clear test data và xác nhận dashboard/reference về empty.
+7. Nếu M365 được cấu hình: connect hai account test, xác nhận scope từng role,
+   chọn exact folder, sync manual/visible-tab auto, tạo Tran Outlook draft và
+   kiểm draft chưa gửi + workbook attachment; không dùng mailbox vận hành.
+8. Clear test data và xác nhận dashboard/reference empty, hai role M365 bị
+   disconnect và phải reconnect.
 
-Snapshot 2026-08-15 đã xác nhận deploy đang live ở commit cũ `e67f08b`, health
-200, auth 401, Gunicorn boot và WeasyPrint 68.1 được cài. Commit template/Draft
-Mail `9e17959` đã push/CI xanh nhưng chưa Manual Deploy. Authenticated cloud
-workflow chưa được automation chạy vì AI không đọc/chia sẻ secret Basic Auth;
-operator cần chạy checklist trên. Manual Deploy/redeploy có thể xóa toàn bộ dữ
-liệu `/tmp/asset-hub-staging`, nên phải lấy xác nhận của user ngay trước thao tác.
+Ngày 2026-08-15, user đã xác nhận chấp nhận mất dữ liệu staging và Manual Deploy
+commit `728734e285ea93a11431918030be36f2bcf14145`. Render checkout đúng commit,
+Docker build thành công, health check liên tục trả 200 và deployment chuyển sang
+**live** lúc 15:38 GMT+7. Smoke test độc lập sau deploy xác nhận
+`GET /api/health` trả 200 với payload constant và `GET /` không credential trả
+401. Log runtime cũng ghi nhận React shell, bundle, dashboard API và trạng thái
+Tran reference được tải thành công từ một phiên đã xác thực; automation không
+đọc hoặc chia sẻ secret Basic Auth. Full synthetic workflow có ghi dữ liệu vẫn
+thuộc checklist operator ở trên. Mọi lần Manual Deploy/redeploy sau vẫn có thể
+xóa toàn bộ dữ liệu `/tmp/asset-hub-staging`, nên phải lấy xác nhận mới của user
+ngay trước thao tác.
+
+Cũng trong ngày 2026-08-15, user yêu cầu bật Draft Mail sau khi UI báo capability
+chưa sẵn sàng. Đối chiếu Render Environment xác nhận service hiện hữu thiếu
+`ASSET_HUB_DRAFT_FROM_ADDRESS` dù biến đã được khai báo trong
+`render.staging.yaml`; Manual Deploy code trước đó không đồng bộ lại Blueprint
+environment. Biến được thêm với giá trị staging `operator@example.invalid` và
+Render chạy **Save, rebuild, and deploy** tại commit
+`cfa1dd05bf9209939b3dddda5e04efe5e4859253`. Deployment chuyển live lúc 16:00
+GMT+7, health trả 200 liên tục, auth boundary vẫn 401 khi không credential và
+không thấy traceback/exception/5xx trong log hậu deploy. Runtime hiện có đủ ba
+điều kiện capability Draft: EML retention đã cấu hình, bundled Tran workbook
+template và draft sender. Do rebuild dùng `/tmp`, operator phải reload dashboard
+và nạp lại EML/reference test trước khi tạo draft.
 
 ### 14.3 GreenNode
 
@@ -987,7 +1191,21 @@ Manual Deploy; không được suy ra rằng push GitHub đã làm code mới l�
 
 ### 15.3 Bằng chứng release gần nhất
 
-- Independent QA: không còn P0/P1, verdict staging conditional.
+> Release candidate M365/Tran performance ở feature commit
+> `a69978f2ad6db0d399c6ce815449cd54c7502a98`: local Ruff pass; 328 tests
+> collected = 326 pass + 2 expected platform skips; coverage 84%; Vite 48
+> modules build hai lần byte-for-byte ổn định; `git diff --check` và staged
+> secret/privacy scan pass. Linux CI exact SHA pass 328 tests trong 27,42 giây,
+> 85% coverage, production Docker build và GreenNode Compose validation. Release
+> này chưa live trên Render.
+
+- Independent QA current candidate: không còn P0/P1/P2 regression trong phạm vi
+  M365/Graph + Tran; verdict approve cho staging sau UAT.
+- CI Linux current candidate:
+  [run 31880602675](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/actions/runs/31880602675)
+  pass toàn bộ frontend, Ruff, 328 tests, Docker và GreenNode Compose.
+- Các dòng lịch sử dưới đây mô tả release template/Draft Mail đang live, không
+  phải candidate M365 mới.
 - CI Linux của exact commit `9e17959`: 251 pass trong 29,23 giây, 85% coverage
   (6.476 statements, 967 missed); frontend, Ruff, production Docker build và
   GreenNode Compose validation cùng workflow đều xanh.
@@ -1003,6 +1221,29 @@ Manual Deploy; không được suy ra rằng push GitHub đã làm code mới l�
 - Template scans: chỉ hai sanitized `.xlsx`; Tran template giữ active/hidden
   sheet state, filter/view/page setup và style gốc nhưng không có VBA,
   externalLinks, embedding, ActiveX/OLE, customXml, email pattern hay case data.
+
+Regression mới của working tree bao phủ:
+
+- least-privilege scope + separate Ngan/Tran token caches, account chooser,
+  one-time/expired state, same-origin return, 8-hour absolute session TTL,
+  bounded eviction và reset;
+- Graph HTTPS/timeout/no-redirect/path/cursor/folder bounds, MIME size, reconnect,
+  message-unavailable 404 và structural proof không có send operation;
+- exact Message-ID lookup, Reply-All draft body/table/attachment, safe body bound,
+  partial-draft rollback/uncertainty và sanitized errors;
+- sync dùng validator/ingestion/retention có sẵn, cursor commit ordering, invalid/
+  oversized MIME + moved/deleted item không poison cursor, data-minimized counts;
+- exact EML thiếu/invalid Date khi retry qua ranh giới tháng tái dùng stored
+  fallback theo Message-ID hash + content hash, nên không sinh case ID thứ hai;
+- HTTP capability/cookie/no-store/Basic callback exception/action headers/reset;
+- JSON API body bị chặn ở 1 MiB trước Flask parse; Tran tag/name/domain/metadata/
+  numeric input và whole-VND magnitude đều có server-authoritative ceiling;
+- CCDC parser không random-access `ReadOnlyWorksheet.cell()`, managed cache prime/
+  invalidation, row/record/text ceiling, stable external stat cache, mixed-pair
+  rejection và concurrent single-flight cache miss.
+
+Synthetic 600-row CCDC hotspot benchmark trên máy dev: 20.417 s → 0.073 s
+(~280×). Ghi rõ đây là microbenchmark synthetic, không phải SLA/UAT production.
 
 ### 15.4 Khoảng trống automation hiện tại
 
@@ -1039,11 +1280,13 @@ Function-by-function migration status nằm ở
 
 - parsing multi-record, Supplier enrichment, semantic accounting, batch,
   source EML, individual/batch PDF, Tran lookup/calculation/workbook/`Sent out`/
-  draft đều đã có tested product equivalent;
-- unsafe dynamic imports, GET mutation, arbitrary mailbox scan, auto-send,
+  draft và optional exact-folder M365 ingestion/Outlook draft đều đã có tested
+  product equivalent;
+- unsafe dynamic imports, GET mutation, arbitrary/global mailbox scan, auto-send,
   silent truncation và arbitrary path download được retired;
-- Outlook `Display()`/mailbox/send không được implement trong repo; operator có
-  thể mở draft `.eml` tải xuống bằng mail client đã phê duyệt. Word pixel-level
+- COM Outlook `Display()` và send không được implement. Operator có thể mở draft
+  `.eml`; optional Graph path tạo Reply-All draft trong own mailbox từ exact
+  retained Message-ID và trả web link, nhưng vẫn không gửi. Word pixel-level
   rendering là local Windows capability, không thể chạy trên Render Linux;
 - exact operational GL/template/VBA và real CCDC certification là external/UAT,
   không phải nội dung public repo.
@@ -1075,34 +1318,36 @@ giới hạn/next step, không được quảng bá là đã production-ready:
 ### Ưu tiên cao cho UAT/release
 
 1. Operator đăng nhập staging và chạy synthetic end-to-end cloud PDF + Tran;
-   automation không được lấy secret từ Render.
-2. Review draft PR #5, merge vào `main` khi owner chấp thuận; sau merge tạo/tag
-   release nếu cần cho hackathon.
+   deploy/health/auth/UI-load đã smoke thành công, nhưng automation không được
+   lấy secret từ Render để tự ghi dữ liệu test.
+2. Feature PR #5 đã merge; review draft PR M365/Tran #6 và merge khi owner chấp
+   thuận. Tạo/tag release nếu cần cho hackathon.
 3. UAT bằng approved operational accounting template/config trên môi trường
    private; Finance xác nhận 30-column output và GL mapping.
 4. UAT CCDC bằng workbook thật đã phê duyệt; hiện chỉ certified bằng synthetic.
 5. Test Word adapter trên máy Office mục tiêu nếu cần exact legacy layout; việc
-   mở draft bằng Outlook là thao tác operator bên ngoài product.
+   mở local `.eml` bằng Outlook là thao tác operator bên ngoài product.
 6. Chốt business rule Supplier Site: script legacy chỉ dùng site `OFFICE`, còn
    product hiện nhận mọi nonblank site và dùng collision checks. Không tự thêm
    filter trước khi owner xác nhận; nếu cần, triển khai configurable allowlist và
    regression thay vì hard-code rải rác.
+7. Operator UAT candidate `a69978f` bằng hai mailbox/folder test cùng tenant:
+   xác nhận Ngan chỉ `Mail.Read`, Tran `Mail.ReadWrite`, không `Mail.Send`, sync
+   không mutate mail và Reply-All draft thực sự chưa gửi. Chỉ redeploy Render sau
+   khi user chấp nhận mất dữ liệu staging một lần nữa.
 
 ### Chức năng trong specification nhưng chưa có end-to-end
 
-1. Direct scoped M365 ingestion cho đúng mailbox được ủy quyền; product hiện yêu
-   cầu upload `.eml` hoặc server inbox. Cần OAuth/app registration, consent và
-   retention design trước khi nối.
-2. ZaloBOT webhook/notification; chưa có endpoint/credential/notification
+1. ZaloBOT webhook/notification; chưa có endpoint/credential/notification
    contract nên không được tự gửi hay giả lập.
-3. Owner-specific workflow, `current_owner`, `days_in_current_status`, owner/SLA
+2. Owner-specific workflow, `current_owner`, `days_in_current_status`, owner/SLA
    filters và late highlighting. Domain hiện chỉ có năm status chung.
-4. Monthly Excel/CSV case report kèm lịch sử status. SQLite audit đã thay
+3. Monthly Excel/CSV case report kèm lịch sử status. SQLite audit đã thay
    `case_log.xlsx` làm database, nhưng chưa có report export riêng.
 
-Các mục này phải được xem là backlog thật, không được quảng bá là DONE. M365,
-Zalo và owner/SLA là mở rộng schema/integration đáng kể, cần user/product owner
-chốt contract và quyền truy cập trước khi implement.
+Các mục này phải được xem là backlog thật, không được quảng bá là DONE. Zalo và
+owner/SLA là mở rộng schema/integration đáng kể, cần user/product owner chốt
+contract và quyền truy cập trước khi implement.
 
 ### Trước production nhiều người dùng
 
@@ -1113,12 +1358,16 @@ chốt contract và quyền truy cập trước khi implement.
    backups/restore drills và observability/alerting.
 5. End-to-end browser test trong CI, accessibility audit và supported-browser matrix.
 6. Versioned policy/template registry với approval/signature/audit.
+7. M365 production hardening: encrypted durable token/cursor store, account
+   revocation/rotation, per-user audit, worker hoặc Graph webhook/subscription
+   renewal, multi-instance coordination và formal retention. Browser visible-tab
+   5-minute timer hiện tại không phải background ingestion.
 
 ### Intentional non-features
 
 - Không tự gửi email.
 - Không tự post journal vào ERP.
-- Không scan Outlook mailbox toàn cục.
+- Không scan Outlook mailbox toàn cục; chỉ role account + exact selected folder.
 - Không ship operational data/GL/VBA.
 - Không bảo đảm Word và WeasyPrint pixel-identical.
 
@@ -1143,6 +1392,10 @@ cập nhật hồ sơ này. Thực hiện theo thứ tự:
     `main`, không merge nếu user chưa yêu cầu.
 11. Chờ CI exact SHA; nếu staging branch auto-deploy, kiểm health/log rồi báo rõ
     phần authenticated nào cần operator test.
+12. Với release M365/performance này, **push GitHub không cho phép tự redeploy
+    Render**. Lấy xác nhận mới ngay trước Manual Deploy vì filesystem staging
+    ephemeral sẽ bị xóa; sau deploy mới cấu hình/kiểm Entra callback và mailbox
+    synthetic theo runbook.
 
 Không tuyên bố “xong hết” chỉ vì unit test pass. Definition of done gồm behavior,
 regression, security/privacy, generated artifacts, docs, GitHub push và handoff
@@ -1158,7 +1411,14 @@ rõ các giới hạn còn lại.
 | EML không tạo case | Xem `warnings`, `unknown_files`, `skipped_files`; kiểm MIME/size/subject/table/skip marker |
 | Tran lookup unavailable | Upload/configure FA&GL; xem `/api/tran/references/status` |
 | Tran NEEDS_REVIEW | Đọc reasons/provenance; xác minh physical/lookup/cost/start/group/fee, không đoán |
-| Draft disabled | Cần retention, template và `ASSET_HUB_DRAFT_FROM_ADDRESS` |
+| Local `.eml` draft disabled | Cần retention, template và `ASSET_HUB_DRAFT_FROM_ADDRESS` |
+| M365/Outlook panel disabled | Kiểm đủ 4 M365 env, tenant/client/callback hợp lệ, `msal` + `requests`; restart app |
+| OAuth callback fail | Entra Web redirect phải exact `/api/m365/callback`; cùng browser phải giữ opaque cookie/state; state hết sau 10 phút |
+| M365 vừa connect nhưng mất state | Restart/redeploy, session absolute 8 giờ, reset hoặc nhiều worker; reconnect và chọn folder lại |
+| Sync không thấy mail | Kiểm đúng role account/tenant/exact folder; first sync chỉ 30 ngày, mỗi request 1 page/10 mail; `has_more=true` thì sync tiếp |
+| Outlook draft disabled | Tran M365 connected + retention + template + exact retained source Message-ID; workbook phải dưới 2.8 MB |
+| Outlook draft báo uncertainty | Kiểm Outlook Drafts trước khi retry; Graph có thể đã tạo draft nhưng rollback không xác nhận được |
+| Tran reference xử lý lại chậm | Xác nhận route dùng `TranReferenceUploadService.load_indices`; cache mất sau restart/clear/external stat change |
 | PDF disabled local Windows | Cài `.[windows]`, Word desktop; restart app |
 | PDF disabled Linux | Cài `.[pdf]` + Pango/font; Dockerfile production đã có |
 | PDF overflow | Tăng 1–10 pages hoặc chủ động chọn `warn`; mặc định không cắt |
@@ -1179,13 +1439,15 @@ rõ các giới hạn còn lại.
 7. `docs/UPLOAD_API.md` — Supplier/EML upload contract.
 8. `docs/TRAN_WORKFLOW.md` — rule/lookup/workbook/draft Tran.
 9. `docs/TRAN_API.md` — Tran, retained EML và PDF HTTP API.
-10. `docs/MAIL_ARTIFACTS_AND_PDF.md` — renderer/storage low-level contract.
-11. `docs/COMPENSATION_PREVIEW_API.md` — pure preview API.
-12. `docs/TEAM_DEVELOPMENT.md` — onboarding Codex/Claude/devcontainer/Compose.
-13. `docs/RENDER_FREE_STAGING.md`, `docs/DEPLOYMENT.md`,
+10. `docs/MICROSOFT_365.md` — Entra/OAuth, two roles, exact-folder sync,
+    Outlook draft, API/security/limits/deploy.
+11. `docs/MAIL_ARTIFACTS_AND_PDF.md` — renderer/storage low-level contract.
+12. `docs/COMPENSATION_PREVIEW_API.md` — pure preview API.
+13. `docs/TEAM_DEVELOPMENT.md` — onboarding Codex/Claude/devcontainer/Compose.
+14. `docs/RENDER_FREE_STAGING.md`, `docs/DEPLOYMENT.md`,
     `docs/GREENNODE_DEPLOYMENT.md` — deploy/runbook.
-14. `SECURITY.md` — data handling/threat boundaries.
-15. `docs/DEMO_SCRIPT.md` — hackathon walkthrough.
+15. `SECURITY.md` — data handling/threat boundaries.
+16. `docs/DEMO_SCRIPT.md` — hackathon walkthrough.
 
 ## 22. Prompt khởi động cho cuộc trò chuyện mới
 
@@ -1195,6 +1457,9 @@ Có thể dùng prompt ngắn sau:
 > thái ở mục 2. Tiếp tục task hiện tại dựa trên source/test, không sửa file vận
 > hành ở workspace cha, không đưa dữ liệu thật vào Git. Khi fix xong, chạy release
 > gates, cập nhật `PROJECT_CONTEXT.md`, commit và push feature branch/draft PR.
+> Với M365, giữ hai role cache/scope độc lập, exact-folder only, không `Mail.Send`,
+> không biến browser timer thành lời hứa background. Không deploy Render nếu chưa
+> xin lại xác nhận mất dữ liệu staging.
 
 ## 23. Cách duy trì file này
 

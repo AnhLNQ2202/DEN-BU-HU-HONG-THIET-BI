@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from email import policy
 from email.message import EmailMessage, Message
-from email.parser import BytesParser
+from email.parser import BytesHeaderParser, BytesParser
 from email.utils import format_datetime, getaddresses
 from html.parser import HTMLParser
 from pathlib import Path
@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from asset_compensation.domain import CompensationStatus, ValidationError
 
 from .accounting_xlsx import OutputExistsError
+from .m365_contract import MAX_GRAPH_BODY_CHARS, MAX_TRAN_OUTLOOK_PREFIX_CHARS
 
 if TYPE_CHECKING:
     from asset_compensation.services.tran_workflow_service import TranResolution
@@ -60,6 +61,10 @@ _MAX_QUOTED_SOURCE_CHARS = 100_000
 _MAX_SOURCE_HTML_CHARS = 500_000
 _MAX_QUOTED_HEADER_CHARS = 2_000
 _SOURCE_TRUNCATED_MARKER = "\n[quoted source truncated]"
+_MESSAGE_ID_RE = re.compile(r"<[^<>\s]{1,480}@[^<>\s]{1,480}>")
+_OUTLOOK_QUOTE_TRUNCATED_MARKER = (
+    "\n[Outlook quoted thread truncated for safe draft size]"
+)
 _HTML_DROP_WITH_CONTENT = frozenset(
     {
         "applet",
@@ -272,6 +277,111 @@ def build_tran_mail_table(resolutions: Iterable[TranResolution]) -> str:
         )
     parts.append("</tr></table>")
     return "".join(parts)
+
+
+def extract_source_message_id(original_eml: bytes) -> str:
+    """Return the single exact RFC 822 Message-ID needed for Graph lookup."""
+
+    if not original_eml:
+        raise TranMailError("Source email is required")
+    try:
+        headers = BytesHeaderParser(policy=policy.default).parsebytes(original_eml)
+    except Exception as exc:  # email parser exception types vary for malformed input
+        raise TranMailError("Source email headers are invalid") from exc
+    values = headers.get_all("Message-ID", [])
+    if len(values) != 1:
+        raise TranMailError("Source email must contain exactly one Message-ID header")
+    value = str(values[0]).strip()
+    if not _MESSAGE_ID_RE.fullmatch(value) or "\r" in value or "\n" in value:
+        raise TranMailError("Source email Message-ID is invalid")
+    return value
+
+
+def build_tran_outlook_body(
+    resolutions: Iterable[TranResolution],
+    body_intro: str,
+    quoted_body: str,
+    quoted_content_type: str,
+) -> str:
+    """Prepend approved Tran content to the quote created by Outlook Graph."""
+
+    intro = _body_text(body_intro, "body_intro")
+    if not isinstance(quoted_body, str) or len(quoted_body) > MAX_GRAPH_BODY_CHARS:
+        raise TranMailError("Outlook quoted body is invalid")
+    html_intro = html.escape(intro).replace("\n", "<br>")
+    table = build_tran_mail_table(resolutions)
+    prefix = (
+        '<div style="font-family:Arial,sans-serif;font-size:13px;color:#000;">'
+        f"{html_intro}<br><br>{table}<br><br></div>"
+    )
+    if len(prefix) > MAX_TRAN_OUTLOOK_PREFIX_CHARS:
+        raise TranMailError("Approved Outlook draft content exceeds the safe limit")
+    quoted_html = _bounded_outlook_quote(
+        quoted_body,
+        quoted_content_type,
+        MAX_GRAPH_BODY_CHARS - len(prefix),
+    )
+    result = prefix + quoted_html
+    if len(result) > MAX_GRAPH_BODY_CHARS:  # pragma: no cover - invariant guard
+        raise TranMailError("Outlook draft body exceeds the safe limit")
+    return result
+
+
+def _bounded_outlook_quote(
+    quoted_body: str,
+    quoted_content_type: str,
+    budget: int,
+) -> str:
+    wrapper_start = '<div style="white-space:pre-wrap;">'
+    wrapper_end = "</div>"
+    content_type = str(quoted_content_type or "").casefold()
+    has_unsafe_controls = any(
+        (ord(character) < 32 and character not in {"\n", "\r", "\t"})
+        or ord(character) == 127
+        for character in quoted_body
+    )
+    if content_type == "html" and not has_unsafe_controls and len(quoted_body) <= budget:
+        return quoted_body
+    if content_type == "text" and not has_unsafe_controls:
+        escaped = html.escape(quoted_body)
+        candidate = f"{wrapper_start}{escaped}{wrapper_end}"
+        if len(candidate) <= budget:
+            return candidate
+        visible_text = quoted_body
+    elif content_type == "html":
+        extractor = _SafeHtmlTextExtractor()
+        try:
+            extractor.feed(quoted_body[:_MAX_SOURCE_HTML_CHARS])
+            extractor.close()
+        except Exception:
+            visible_text = ""
+        else:
+            visible_text = extractor.text()
+    elif content_type == "text":
+        visible_text = quoted_body
+    else:
+        raise TranMailError("Outlook quoted body type is invalid")
+
+    normalized = "".join(
+        character
+        for character in visible_text.replace("\r\n", "\n").replace("\r", "\n")
+        if (ord(character) >= 32 and ord(character) != 127)
+        or character in {"\n", "\t"}
+    )
+    marker = _OUTLOOK_QUOTE_TRUNCATED_MARKER
+    fixed = len(wrapper_start) + len(wrapper_end)
+    if fixed + len(html.escape(marker)) > budget:
+        raise TranMailError("Outlook quoted-body budget is invalid")
+    low, high = 0, len(normalized)
+    while low < high:
+        midpoint = (low + high + 1) // 2
+        escaped = html.escape(normalized[:midpoint].rstrip() + marker)
+        if fixed + len(escaped) <= budget:
+            low = midpoint
+        else:
+            high = midpoint - 1
+    escaped = html.escape(normalized[:low].rstrip() + marker)
+    return f"{wrapper_start}{escaped}{wrapper_end}"
 
 
 def _bounded_source_text(value: object, limit: int) -> str:

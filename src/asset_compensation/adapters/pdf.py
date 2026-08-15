@@ -534,7 +534,7 @@ class WordPdfConverter:
             if not pdf_path.is_file() or pdf_path.stat().st_size == 0:
                 raise PdfAdapterError("Word did not produce a PDF output")
             with tempfile.NamedTemporaryFile(
-                prefix=f".{destination_path.stem}.",
+                prefix=".word-",
                 suffix=".pdf",
                 dir=destination_path.parent,
                 delete=False,
@@ -656,7 +656,7 @@ class WeasyPrintPdfConverter:
         pdf_identifier = hashlib.sha256(rendered_html.encode("utf-8")).digest()
 
         with tempfile.NamedTemporaryFile(
-            prefix=f".{destination_path.stem}.",
+            prefix=".render-",
             suffix=".pdf",
             dir=destination_path.parent,
             delete=False,
@@ -776,7 +776,7 @@ class PypdfPageNormalizer:
                     writer.add_blank_page(width=width, height=height)
 
             with tempfile.NamedTemporaryFile(
-                prefix=f".{destination_path.stem}.",
+                prefix=".normalize-",
                 suffix=".pdf",
                 dir=destination_path.parent,
                 delete=False,
@@ -831,7 +831,7 @@ class PypdfMerger:
                     writer.add_page(page)
 
             with tempfile.NamedTemporaryFile(
-                prefix=f".{destination_path.stem}.",
+                prefix=".merge-",
                 suffix=".pdf",
                 dir=destination_path.parent,
                 delete=False,

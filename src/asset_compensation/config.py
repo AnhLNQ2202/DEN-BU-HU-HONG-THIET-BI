@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -35,6 +35,10 @@ class Settings:
     ccdc_reference: Path | None = None
     tran_template: Path | None = None
     draft_from_address: str | None = None
+    m365_tenant_id: str | None = None
+    m365_client_id: str | None = None
+    m365_client_secret: str | None = field(default=None, repr=False)
+    m365_redirect_uri: str | None = None
     damaged_debit_gl: str = "DEMO.COMP.RECEIVABLE"
     damaged_credit_gl: str = "DEMO.DAMAGED.OFFSET"
     lost_debit_gl: str = "DEMO.COMP.RECEIVABLE"
@@ -141,6 +145,10 @@ class Settings:
                 else None
             ),
             draft_from_address=os.getenv("ASSET_HUB_DRAFT_FROM_ADDRESS") or None,
+            m365_tenant_id=os.getenv("ASSET_HUB_M365_TENANT_ID") or None,
+            m365_client_id=os.getenv("ASSET_HUB_M365_CLIENT_ID") or None,
+            m365_client_secret=os.getenv("ASSET_HUB_M365_CLIENT_SECRET") or None,
+            m365_redirect_uri=os.getenv("ASSET_HUB_M365_REDIRECT_URI") or None,
             damaged_debit_gl=os.getenv(
                 "ASSET_HUB_DAMAGED_DEBIT_GL", "DEMO.COMP.RECEIVABLE"
             ),

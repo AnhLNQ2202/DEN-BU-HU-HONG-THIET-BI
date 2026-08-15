@@ -34,7 +34,7 @@ RUN apt-get update \
        libpango-1.0-0 \
        libpangoft2-1.0-0 \
     && rm -rf /var/lib/apt/lists/* \
-    && python -m pip install --no-cache-dir ".[deploy,email,pdf]" \
+    && python -m pip install --no-cache-dir ".[deploy,email,pdf,m365]" \
     && groupadd --gid 1000 app \
     && useradd --uid 1000 --gid app --create-home --shell /bin/bash app \
     && mkdir -p /var/data \
@@ -44,4 +44,4 @@ USER app
 
 EXPOSE 10000
 
-CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads ${GUNICORN_THREADS:-4} --timeout ${GUNICORN_TIMEOUT:-120} --access-logfile - --error-logfile - 'asset_compensation.web.app:create_app()'"]
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads ${GUNICORN_THREADS:-4} --timeout ${GUNICORN_TIMEOUT:-120} --access-logfile - --access-logformat '%(h)s %(t)s \"%(m)s %(U)s %(H)s\" %(s)s %(L)s' --error-logfile - 'asset_compensation.web.app:create_app()'"]

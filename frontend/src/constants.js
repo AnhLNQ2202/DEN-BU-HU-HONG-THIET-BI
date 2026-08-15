@@ -9,6 +9,8 @@ export const API = Object.freeze({
   tranResolve: "/api/tran/resolve",
   tranWorkbooks: "/api/tran/workbooks",
   tranDrafts: "/api/tran/drafts",
+  tranOutlookDrafts: "/api/tran/outlook-drafts",
+  m365: "/api/m365",
   mailPdfIndividual: "/api/mail-pdfs/individual",
   mailPdfBatches: "/api/mail-pdfs/batches",
   clearTestData: "/api/test-data/clear",

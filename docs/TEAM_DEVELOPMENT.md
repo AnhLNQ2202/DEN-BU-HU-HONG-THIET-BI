@@ -143,12 +143,35 @@ nhất một thành viên khác review những thay đổi nghiệp vụ hoặc 
 | React/UI | `pnpm build`, mở `5173`, đi qua flow đã đổi, so với UI gốc |
 | Flask/API/service | `ruff check .`, `pytest --cov=asset_compensation` |
 | Parser/Excel | Test bằng fixture synthetic; kiểm tra cảnh báo và workbook output |
+| Microsoft 365/Graph | Dùng Entra app test cùng tenant, hai account test nếu cần; kiểm scope, exact folder, reconnect, không `Mail.Send`; không dùng mailbox vận hành |
 | Docker/deploy | `docker build -t asset-compensation-hub:local .`, gọi `/api/health` |
 | Tài liệu/config | Kiểm tra lệnh, link, YAML/JSON và chạy quick start nếu có Docker |
 
 Container Linux không chạy các adapter COM của Outlook/Word. Core tests không
 phụ thuộc Office. Nếu một task thực sự đụng COM/VBA, kiểm thử bổ sung trên máy
 Windows có Office được IT phê duyệt, với dữ liệu giả; không đưa file đó vào Git.
+
+## Kiểm thử Microsoft 365/Outlook tùy chọn
+
+Tích hợp Graph không cần Outlook desktop và không dùng COM. Mỗi browser session
+có thể kết nối hai tài khoản độc lập trong cùng tenant: NganTLT xin delegated
+`Mail.Read`, TranNNB xin `Mail.ReadWrite` để tạo Reply-All draft. Product không
+xin `Mail.Send`, không có endpoint gửi và không đánh dấu mail đã đọc, di chuyển
+hoặc xóa mail nguồn.
+
+Để test local/cloud, dùng tenant và mailbox test được tổ chức phê duyệt, đăng ký
+đúng callback `/api/m365/callback`, rồi set đủ bốn biến M365 ở runtime. Không
+commit client secret. Với local, callback có thể là
+`http://127.0.0.1:5000/api/m365/callback`; với Render phải là URL HTTPS chính xác
+của service. Hướng dẫn Entra, environment, API và giới hạn nằm ở
+[MICROSOFT_365.md](MICROSOFT_365.md).
+
+Mỗi role phải chọn đúng một folder. Sync đầu chỉ xét 30 ngày gần nhất; UI có tùy
+chọn lặp lại mỗi 5 phút khi tab còn mở và visible. Đây là browser timer, không
+phải background worker. Token cache, folder và delta cursor chỉ giữ trong memory
+tối đa 8 giờ, sẽ mất khi backend restart/redeploy và không dùng được với nhiều
+Gunicorn worker/instance. `POST /api/test-data/clear` được phép trên staging cũng
+xóa toàn bộ session M365 in-memory để tester kết nối lại từ đầu.
 
 ## Dữ liệu, secrets và file output
 
@@ -179,6 +202,12 @@ Khi team cần một URL để cùng test PR:
    đây là hành vi mong đợi.
 5. Ghi URL preview vào PR, test, rồi xoá service preview khi merge/đóng PR.
 
+Nếu preview bật M365, dùng Entra app/mailbox test, đặt đủ tenant ID, client ID,
+client secret và exact HTTPS redirect URI trong secret store riêng của preview.
+Các role dùng `/me`, nên chỉ truy cập mailbox của account đang đăng nhập; MVP
+không hỗ trợ shared mailbox hoặc cross-tenant. Restart preview buộc reconnect và
+chọn folder lại.
+
 Nếu cần giữ trạng thái qua restart, cấp một disk riêng cho preview; tuyệt đối
 không mount disk production. Cloud preview dùng để review/test, còn chỉnh code
 vẫn thực hiện qua clone/worktree rồi push branch.
@@ -189,6 +218,13 @@ vẫn thực hiện qua clone/worktree rồi push branch.
   copy local của `compose.dev.yaml`; không commit thay đổi cá nhân đó.
 - Frontend báo API lỗi: kiểm tra
   `docker compose -f compose.dev.yaml ps` và mở `/api/health`.
+- Microsoft 365 không bật: kiểm đủ bốn biến, tenant/client là GUID hoặc tenant
+  domain hợp lệ, callback khớp tuyệt đối giữa Entra và server, rồi restart app.
+- OAuth xong nhưng mất kết nối/folder: backend đã restart, session 8 giờ đã hết,
+  hoặc test reset vừa chạy; kết nối và chọn folder lại. Disconnect chỉ xóa cache
+  local của app, không thu hồi consent trong Entra.
+- Sync Outlook không thấy mail: kiểm đúng account/tenant/folder; lượt đầu chỉ 30
+  ngày, mỗi request đúng 1 page/tối đa 10 mail; nếu `has_more=true` hãy sync tiếp.
 - Dependency thay đổi nhưng container chưa nhận: chạy lại
   `docker compose -f compose.dev.yaml up --build`.
 - Cần demo sạch: dùng `down -v`, sau đó `up --build`; thao tác này chỉ xoá volume

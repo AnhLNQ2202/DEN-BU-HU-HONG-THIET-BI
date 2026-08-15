@@ -63,17 +63,17 @@ not sufficient.
 | `fmt_date` | Render `dd/mm/yyyy` | `DONE`: shared Tran mail-table formatter. |
 | `clean_text` | Normalize blank/quoted identifiers | `DONE`: shared Tran mail-table formatter. |
 | `build_table` | Build the 15-column Sent-out HTML table and totals | `DONE`: escaped mail-facing 15-column table with the original labels, blue header, yellow total-amount column, black border, Arial 12 px, per-column alignment and bold G/H/I totals. |
-| `main` | Read `Sent out` and write mail-body HTML | `DONE`: the Tran flow produces a downloadable unsent RFC822 draft from the current export; approved prose remains mandatory operator input. |
+| `main` | Read `Sent out` and write mail-body HTML | `DONE`: the Tran flow produces a downloadable unsent RFC822 draft and, when the Tran Microsoft 365 role is connected, can prepend the same exact table to an Outlook-created Reply-All draft. Approved prose remains mandatory operator input; neither path sends mail. |
 
 ## `draft_mail_outlook.py` — 5 functions
 
 | Original function | Responsibility | Product mapping |
 |---|---|---|
-| `_is_reply_or_forward` | Detect thread replies/forwards | `RETIRED`: the cloud flow does not scan a mailbox; it replies against the explicitly retained source EML. |
-| `_iter_folders_2_levels` | Traverse Outlook folders | `RETIRED/EXTERNAL`: no Outlook/MAPI adapter exists in this repository; the product requires explicit source EML selection. |
-| `find_best_mail_by_subject` | Prefer oldest original, else newest reply | `RETIRED`: explicit source-artifact selection removes global mailbox guessing. |
-| nested `_received` | Normalize Outlook received time | `RETIRED`: no mailbox scan occurs in the cloud flow. |
-| `main` | `ReplyAll`, prepend HTML and display a draft | `DONE/EXTERNAL`: product creates a downloadable Reply-All RFC822 draft, quotes the selected source as bounded inert text, and never sends automatically. Outlook `Display()` is not implemented; an operator may open the downloaded draft in an approved local client. |
+| `_is_reply_or_forward` | Detect thread replies/forwards | `RETIRED`: the product no longer guesses an original by subject/reply prefix. Graph draft creation uses the single exact RFC 822 `Message-ID` from the explicitly retained source EML. |
+| `_iter_folders_2_levels` | Traverse Outlook folders | `DONE/REPLACED`: optional Graph integration returns a bounded visible-folder tree (depth 4, 200 folders, 10 pages), then requires the operator to select exactly one folder per role. It never scans every Outlook folder. |
+| `find_best_mail_by_subject` | Prefer oldest original, else newest reply | `RETIRED/REPLACED`: exact `internetMessageId` lookup must return one mailbox message; zero or multiple matches fail closed. Subject guessing is not used. |
+| nested `_received` | Normalize Outlook received time | `RETIRED/REPLACED`: first selected-folder delta sync uses Graph `receivedDateTime` only for a 30-day lower bound; the existing EML parser remains authoritative for ingested mail. |
+| `main` | `ReplyAll`, prepend HTML and display a draft | `DONE/PARTIAL LOCAL UX`: the local path creates a downloadable Reply-All RFC822 draft. The optional Tran Graph path calls `createReplyAll`, prepends the approved intro and exact Tran table to Outlook's quoted thread, attaches the generated workbook and returns a validated Outlook web link. Neither path sends. COM `Display()` remains intentionally unimplemented. |
 
 ## `ghep_mail_pdf_word.py` — 12 functions
 
@@ -140,12 +140,22 @@ They are covered with synthetic workbooks; production UAT is still required for
 the organization's actual CCDC export because no real CCDC workbook was present
 in the audited source folder.
 
+The CCDC reader now streams bounded read-only rows once instead of repeatedly
+calling random-access `cell()` on `ReadOnlyWorksheet`; the latter caused
+quadratic-style reparsing on larger exports. FA&GL and CCDC indexes are cached as
+one bounded active generation. Managed uploads prime the exact validated
+generation, clear invalidates it, and external fallback files are stat-keyed and
+pair-revalidated before publication so a request cannot mix two generations.
+A synthetic 600-row benchmark on the development machine improved from 20.417 s
+to 0.073 s (about 280x); this is diagnostic evidence, not a universal SLA.
+
 ## Non-equivalent behaviours that must not be copied blindly
 
 - Dynamic Python imports and subprocess marker parsing.
 - GET requests that mutate `case_log.xlsx`.
 - Deleting raw Supplier files by filename pattern.
-- Scanning every Outlook mailbox without account/sender scope.
+- Scanning every Outlook mailbox without an explicit role account and exact
+  selected folder.
 - Silent PDF page truncation.
 - Raw HTML insertion into an email body.
 - Automatic send or overwrite. Draft creation and source/template writes require

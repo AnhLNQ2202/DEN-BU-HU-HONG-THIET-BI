@@ -110,8 +110,43 @@ route verifies the content hash and returns `Cache-Control: private, no-store`.
 Retention remains disabled by default, and the private directory is not even
 created while disabled.
 
-`POST /api/tran/drafts` accepts `assets`, `mail_artifact_handle`, a mandatory
-operator-approved `body_intro`, and the optional workbook date/sheet fields.
+`POST /api/tran/drafts` accepts `assets`, a parallel `source_bindings` array,
+`mail_artifact_handle`, a mandatory operator-approved `body_intro`, and the
+optional workbook date/sheet fields:
+
+```json
+{
+  "assets": [
+    {"tag_number": "LAP10001", "asset_name": "Laptop", "domain": "user"}
+  ],
+  "source_bindings": [
+    {"case_id": "LOST-202608-...", "source_row_index": 0}
+  ],
+  "mail_artifact_handle": "eml-sha256-<64 lowercase hex characters>",
+  "body_intro": "Dear team, ...",
+  "processing_date": "2026-08-15",
+  "year_sheet": "2026"
+}
+```
+
+`source_bindings` must have the same order and length as `assets`. A parsed
+table case can own multiple entries in `metadata.asset_rows`, so its `case_id`
+may be repeated with different `source_row_index` values. Each
+`(case_id, source_row_index)` pair must be unique. For a LOST case without an
+`asset_rows` table, use `source_row_index: null`; a table-backed case requires a
+valid zero-based row index.
+
+Before reading retained mail or creating output, the server verifies that every
+case is LOST, is not `ACCOUNTED` or `CLOSED`, references the exact submitted
+retained-mail handle, and contains the selected source row. The submitted
+`tag_number` and normalized `domain` must exactly match that row (or the
+non-table case identity); clients cannot override those source-provenance
+fields. Other supported asset fields can still carry an operator-approved
+correction.
+
+`POST /api/tran/outlook-drafts` uses the same `assets`, `source_bindings`,
+retained-handle, and source-validation contract before it creates the Graph
+Reply-All draft.
 It requires `ASSET_HUB_DRAFT_FROM_ADDRESS`. The response returns separate
 workbook and `.eml` draft download URLs. The draft has `X-Unsent: 1`; the
 product exposes no send endpoint and never starts Outlook. Its HTML table uses

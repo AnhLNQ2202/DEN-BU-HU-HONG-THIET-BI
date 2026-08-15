@@ -14,7 +14,6 @@ from flask import Flask
 from openpyxl import Workbook, load_workbook
 from pypdf import PdfWriter
 
-import asset_compensation.web.routes as routes_module
 from asset_compensation.config import Settings
 from asset_compensation.services import MailPdfService
 from asset_compensation.web import create_app
@@ -63,22 +62,29 @@ def _fa_gl_bytes() -> bytes:
         for column, header in headers.items():
             sheet.cell(header_row, column, header)
         if sheet_name == "VNG-Tool":
-            sheet.cell(data_row, 2, "Synthetic Company")
-            sheet.cell(data_row, 7, "0603")
-            sheet.cell(data_row, 8, "000")
-            sheet.cell(data_row, 10, "01")
-            sheet.cell(data_row, 12, "SYN-001")
-            sheet.cell(data_row, 16, "MOU10001")
-            sheet.cell(data_row, 22, date(2025, 1, 1))
-            sheet.cell(data_row, 25, 48)
-            sheet.cell(data_row, 27, 1_000_000)
+            records = (
+                ("SYN-001", "MOU10001", 1_000_000),
+                ("SYN-002", "LAP10001", 2_000_000),
+                ("SYN-003", "MON10002", 1_500_000),
+            )
+            for offset, (asset_number, tag_number, cost) in enumerate(records):
+                row = data_row + offset
+                sheet.cell(row, 2, "Synthetic Company")
+                sheet.cell(row, 7, "0603")
+                sheet.cell(row, 8, "000")
+                sheet.cell(row, 10, "01")
+                sheet.cell(row, 12, asset_number)
+                sheet.cell(row, 16, tag_number)
+                sheet.cell(row, 22, date(2025, 1, 1))
+                sheet.cell(row, 25, 48)
+                sheet.cell(row, 27, cost)
     stream = io.BytesIO()
     workbook.save(stream)
     workbook.close()
     return stream.getvalue()
 
 
-def _lost_table_email() -> bytes:
+def _lost_table_email(*, same_domain: bool = False) -> bytes:
     message = EmailMessage()
     message["Subject"] = "IT - Thông tin tài sản thất lạc"
     message["From"] = "Synthetic Asset Team <asset@example.invalid>"
@@ -87,10 +93,15 @@ def _lost_table_email() -> bytes:
     )
     message["Cc"] = "Audit <audit@example.invalid>"
     message["Date"] = "Thu, 13 Aug 2026 03:49:56 +0000"
-    message["Message-ID"] = "<synthetic-retained@example.invalid>"
+    message["Message-ID"] = (
+        "<synthetic-same-domain@example.invalid>"
+        if same_domain
+        else "<synthetic-retained@example.invalid>"
+    )
     message.set_content("Synthetic lost-asset table follows.")
+    second_domain = "demo.alpha" if same_domain else "demo.beta"
     message.add_alternative(
-        """
+        f"""
         <html><body><table>
           <tr>
             <th>Asset Name</th><th>Product Name</th><th>Domain</th>
@@ -101,13 +112,13 @@ def _lost_table_email() -> bytes:
             <th>Product code</th><th>Location</th>
           </tr>
           <tr>
-            <td>DEMO-LAP-101</td><td>Synthetic Laptop</td><td>demo.alpha</td>
+            <td>LAP10001</td><td>Synthetic Laptop</td><td>demo.alpha</td>
             <td>01/01/2025</td><td>01/08/2026</td><td>1,000</td>
             <td>600</td><td>100</td><td>700</td><td>Asset</td><td>VNG</td>
             <td>'0603</td><td>'000</td><td>'01</td>
           </tr>
           <tr>
-            <td>DEMO-MON-102</td><td>Synthetic Monitor</td><td>demo.beta</td>
+            <td>MON10002</td><td>Synthetic Monitor</td><td>{second_domain}</td>
             <td>01/01/2025</td><td>01/08/2026</td><td>500</td>
             <td>200</td><td>50</td><td>250</td><td>Asset</td><td>VNG</td>
             <td>'0603</td><td>'000</td><td>'01</td>
@@ -125,6 +136,24 @@ def _asset() -> dict[str, object]:
         "asset_name": "Synthetic mouse",
         "domain": "demo.user",
         "lost_date": "2026-01-01",
+    }
+
+
+def _asset_from_source_row(
+    case_payload: dict[str, object],
+    source_row_index: int,
+) -> dict[str, object]:
+    metadata = case_payload["metadata"]
+    assert isinstance(metadata, dict)
+    rows = metadata["asset_rows"]
+    assert isinstance(rows, list)
+    row = rows[source_row_index]
+    assert isinstance(row, dict)
+    return {
+        "tag_number": row["asset_code"],
+        "asset_name": row["asset_name"],
+        "domain": row["domain"],
+        "lost_date": "2026-08-01",
     }
 
 
@@ -194,13 +223,14 @@ def test_tran_resolve_serializes_against_reference_replacement(
     upload_finished = Event()
     failures: list[BaseException] = []
     responses: dict[str, int] = {}
-    original_from_path = routes_module.FaGlWorkbookIndex.from_path
+    reference_service = app.extensions["asset_hub"]["tran_reference_upload_service"]
+    original_load_indices = reference_service.load_indices
 
-    def paused_from_path(path: str | Path) -> object:
+    def paused_load_indices(*args: object, **kwargs: object) -> object:
         resolve_started.set()
         if not release_resolve.wait(timeout=5):
             raise RuntimeError("Synthetic resolve was not released")
-        return original_from_path(path)
+        return original_load_indices(*args, **kwargs)
 
     def run_resolve() -> None:
         try:
@@ -222,7 +252,7 @@ def test_tran_resolve_serializes_against_reference_replacement(
         finally:
             upload_finished.set()
 
-    monkeypatch.setattr(routes_module.FaGlWorkbookIndex, "from_path", paused_from_path)
+    monkeypatch.setattr(reference_service, "load_indices", paused_load_indices)
     resolve_thread = Thread(target=run_resolve)
     upload_thread = Thread(target=run_upload)
     try:
@@ -328,10 +358,22 @@ def test_retained_multi_case_email_is_downloadable_and_builds_unsent_draft(
         source.close()
 
         handle = handles.pop()
+        source_case = next(
+            case
+            for case in dashboard_cases
+            if case["id"] == payload["cases"][0]["id"]
+        )
+        source_case_id = source_case["id"]
         draft = client.post(
             "/api/tran/drafts",
             json={
-                "assets": [_asset()],
+                "assets": [_asset_from_source_row(source_case, 0)],
+                "source_bindings": [
+                    {
+                        "case_id": source_case_id,
+                        "source_row_index": 0,
+                    }
+                ],
                 "mail_artifact_handle": handle,
                 "body_intro": "Synthetic approved response",
                 "processing_date": "2026-01-15",
@@ -358,6 +400,78 @@ def test_retained_multi_case_email_is_downloadable_and_builds_unsent_draft(
         assert client.get(f"/api/mail-artifacts/{handle}/download").status_code == 400
         assert client.get(draft.get_json()["draft_download_url"]).status_code == 400
         assert fa_path.read_bytes() == fa_bytes
+    finally:
+        app.extensions["asset_hub"]["repository"].close()
+
+
+def test_same_domain_source_rows_build_one_two_asset_unsent_draft(
+    tmp_path: Path,
+) -> None:
+    fa_path = tmp_path / "same-domain-fa.xlsx"
+    fa_path.write_bytes(_fa_gl_bytes())
+    app = _app(
+        tmp_path,
+        retain_raw_eml=True,
+        fa_gl_reference=fa_path,
+        draft_from_address="operator@example.invalid",
+    )
+    try:
+        client = app.test_client()
+        uploaded = client.post(
+            "/api/emails/upload",
+            data={
+                "files": (
+                    io.BytesIO(_lost_table_email(same_domain=True)),
+                    "Synthetic Same Domain.eml",
+                    "message/rfc822",
+                )
+            },
+            headers={"X-Asset-Hub-Upload": "email-v1"},
+            content_type="multipart/form-data",
+        )
+
+        assert uploaded.status_code == 200
+        payload = uploaded.get_json()
+        assert payload["ingested"] == 1
+        assert len(payload["cases"]) == 1
+        source_case_id = payload["cases"][0]["id"]
+        source_case = next(
+            case
+            for case in client.get("/api/dashboard").get_json()["cases"]
+            if case["id"] == source_case_id
+        )
+        rows = source_case["metadata"]["asset_rows"]
+        assert [row["asset_code"] for row in rows] == ["LAP10001", "MON10002"]
+        assert {row["domain"] for row in rows} == {"demo.alpha"}
+        handle = source_case["source_eml"]["handle"]
+        source_bindings = [
+            {"case_id": source_case["id"], "source_row_index": 0},
+            {"case_id": source_case["id"], "source_row_index": 1},
+        ]
+
+        draft = client.post(
+            "/api/tran/drafts",
+            json={
+                "assets": [
+                    _asset_from_source_row(source_case, 0),
+                    _asset_from_source_row(source_case, 1),
+                ],
+                "source_bindings": source_bindings,
+                "mail_artifact_handle": handle,
+                "body_intro": "Synthetic same-domain approved response",
+                "processing_date": "2026-08-15",
+            },
+        )
+
+        assert draft.status_code == 201
+        assert draft.get_json()["asset_count"] == 2
+        assert draft.get_json()["sent"] is False
+        downloaded = client.get(draft.get_json()["draft_download_url"])
+        parsed = BytesParser(policy=policy.default).parsebytes(downloaded.data)
+        assert parsed["X-Unsent"] == "1"
+        assert "LAP10001" in parsed.get_body(preferencelist=("html",)).get_content()
+        assert "MON10002" in parsed.get_body(preferencelist=("html",)).get_content()
+        downloaded.close()
     finally:
         app.extensions["asset_hub"]["repository"].close()
 

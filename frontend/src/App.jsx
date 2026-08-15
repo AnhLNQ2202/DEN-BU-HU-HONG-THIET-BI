@@ -27,6 +27,10 @@ const EMPTY_DASHBOARD = Object.freeze({
     tran_lookup: false,
     tran_workbook_export: false,
     tran_draft: false,
+    m365_configured: false,
+    m365_ngan: false,
+    m365_tran: false,
+    tran_outlook_draft: false,
     mail_pdf_individual: false,
     mail_pdf_batch: false,
     mail_pdf_backend: null,
@@ -388,6 +392,7 @@ export default function App() {
                 statusBusy={statusBusy}
                 testDataClearVersion={testDataClearVersion}
                 onEmailUpload={uploadEmails}
+                onMailboxSynced={() => loadDashboard({ quiet: true })}
                 onCreateMailPdf={createCaseMailPdf}
                 onClearTestData={clearTestData}
                 onOpenBatch={openBatch}
@@ -403,6 +408,7 @@ export default function App() {
                 cases={dashboard.cases}
                 language={language}
                 onEmailUpload={uploadEmails}
+                onMailboxSynced={() => loadDashboard({ quiet: true })}
                 onReferencesChanged={() => loadDashboard({ quiet: true })}
                 testDataClearVersion={testDataClearVersion}
               />

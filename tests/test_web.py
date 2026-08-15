@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from flask import Flask
+from flask import Flask, Request
 from openpyxl import load_workbook
 
 from asset_compensation.adapters import ACCOUNTING_TEMPLATE_HEADERS
@@ -239,3 +239,37 @@ def test_optional_shared_demo_auth_keeps_health_check_public(tmp_path: Path) -> 
         )
     finally:
         protected.extensions["asset_hub"]["repository"].close()
+
+
+def test_json_body_limit_rejects_before_flask_parses_large_payload(
+    app: Flask,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_get_json(self: Request, *args: object, **kwargs: object) -> dict[str, object]:
+        del self, args, kwargs
+        nonlocal calls
+        calls += 1
+        return {}
+
+    monkeypatch.setattr(Request, "get_json", fake_get_json)
+    headers = {"X-Asset-Hub-Action": "m365-disconnect-v1"}
+    oversized = app.test_client().post(
+        "/api/m365/tran/disconnect",
+        data=b"x" * ((1024 * 1024) + 1),
+        content_type="application/json",
+        headers=headers,
+    )
+
+    assert oversized.status_code == 400
+    assert calls == 0
+
+    exact = app.test_client().post(
+        "/api/m365/tran/disconnect",
+        data=b"x" * (1024 * 1024),
+        content_type="application/json",
+        headers=headers,
+    )
+    assert exact.status_code == 503
+    assert calls == 1

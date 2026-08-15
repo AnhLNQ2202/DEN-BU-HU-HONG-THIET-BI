@@ -19,6 +19,75 @@ function safeApiDownloadUrl(value) {
   return url.startsWith("/api/") && !url.startsWith("//") ? url : null;
 }
 
+function safeExternalUrl(value, allowedHosts) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:"
+      && allowedHosts.has(url.hostname.toLowerCase())
+      && !url.username
+      && !url.password
+      && !url.port
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function m365Path(role, suffix = "") {
+  if (!["ngan", "tran"].includes(role)) throw new Error("Microsoft 365 role is invalid.");
+  return `${API.m365}/${role}${suffix}`;
+}
+
+function normalizeM365Folder(raw = {}) {
+  const id = String(raw?.id || "").trim();
+  if (!id) return null;
+  return {
+    id,
+    display_name: String(raw?.display_name || "").trim() || "—",
+    path: String(raw?.path || "").trim(),
+    child_folder_count: Math.max(0, toNumber(raw?.child_folder_count)),
+  };
+}
+
+function normalizeM365Status(raw = {}, role = "") {
+  const account = raw?.account && typeof raw.account === "object"
+    ? {
+      display_name: String(raw.account.display_name || "").trim(),
+      email: String(raw.account.email || "").trim(),
+    }
+    : null;
+  return {
+    configured: raw?.configured === true,
+    role: ["ngan", "tran"].includes(raw?.role) ? raw.role : role,
+    connected: raw?.connected === true,
+    account,
+    selected_folder: normalizeM365Folder(raw?.selected_folder),
+    cursor_ready: raw?.cursor_ready === true,
+    storage: raw?.storage === "memory" ? "memory" : null,
+    background_sync: raw?.background_sync === true,
+  };
+}
+
+function normalizeM365Sync(raw = {}) {
+  return {
+    ...raw,
+    folder: normalizeM365Folder(raw?.folder),
+    fetched_count: Math.max(0, toNumber(raw?.fetched_count)),
+    ingested: Math.max(0, toNumber(raw?.ingested)),
+    case_ids: Array.isArray(raw?.case_ids)
+      ? raw.case_ids.map((item) => String(item || "").trim()).filter(Boolean)
+      : [],
+    warnings: normalizeWarnings(raw?.warnings),
+    unknown_files: normalizeWarnings(raw?.unknown_files),
+    skipped_files: normalizeWarnings(raw?.skipped_files),
+    has_more: raw?.has_more === true,
+    cursor_ready: raw?.cursor_ready === true,
+  };
+}
+
 function normalizeSourceEml(raw = {}) {
   const metadata = raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {};
   const source = raw.source_eml && typeof raw.source_eml === "object" ? raw.source_eml : {};
@@ -117,6 +186,22 @@ function normalizeTranOutput(raw = {}) {
     workbook_download_url: safeApiDownloadUrl(raw?.workbook_download_url),
     draft_download_url: safeApiDownloadUrl(raw?.draft_download_url),
     sent: raw?.sent === true,
+  };
+}
+
+function normalizeTranOutlookOutput(raw = {}) {
+  const outlookDraft = raw?.outlook_draft && typeof raw.outlook_draft === "object"
+    ? {
+      subject: String(raw.outlook_draft.subject || "").trim(),
+      web_url: safeExternalUrl(
+        raw.outlook_draft.web_url,
+        new Set(["outlook.office.com", "outlook.office365.com", "outlook.cloud.microsoft"]),
+      ),
+    }
+    : null;
+  return {
+    ...normalizeTranOutput(raw),
+    outlook_draft: outlookDraft,
   };
 }
 
@@ -261,6 +346,10 @@ export function normalizeDashboard(payload) {
       tran_lookup: root.capabilities?.tran_lookup === true,
       tran_workbook_export: root.capabilities?.tran_workbook_export === true,
       tran_draft: root.capabilities?.tran_draft === true,
+      m365_configured: root.capabilities?.m365_configured === true,
+      m365_ngan: root.capabilities?.m365_ngan === true,
+      m365_tran: root.capabilities?.m365_tran === true,
+      tran_outlook_draft: root.capabilities?.tran_outlook_draft === true,
       mail_pdf_individual: root.capabilities?.mail_pdf_individual === true,
       mail_pdf_batch: root.capabilities?.mail_pdf_batch === true,
       mail_pdf_backend: ["word-windows", "weasyprint-cloud"].includes(
@@ -274,6 +363,7 @@ export async function request(path, options = {}) {
   const requestOptions = {
     method: options.method || "GET",
     headers: { Accept: "application/json", ...(options.headers || {}) },
+    credentials: "same-origin",
     signal: options.signal,
   };
   if (options.body !== undefined) {
@@ -301,7 +391,9 @@ export async function request(path, options = {}) {
   if (!response.ok) {
     const detail = data?.detail;
     const message = data?.message || data?.error || (typeof detail === "string" ? detail : null);
-    throw new Error(message || `Yêu cầu thất bại (${response.status}).`);
+    const error = new Error(message || `Yêu cầu thất bại (${response.status}).`);
+    error.status = response.status;
+    throw error;
   }
   return data || {};
 }
@@ -432,6 +524,7 @@ export const dashboardApi = {
   ).then(normalizeTranOutput),
   createTranDraft: (
     assets,
+    sourceBindings,
     mailArtifactHandle,
     bodyIntro,
     processingDate,
@@ -442,12 +535,74 @@ export const dashboardApi = {
     signal,
     body: {
       assets,
+      source_bindings: sourceBindings,
       mail_artifact_handle: mailArtifactHandle,
       body_intro: bodyIntro,
       ...(processingDate ? { processing_date: processingDate } : {}),
       ...(yearSheet ? { year_sheet: yearSheet } : {}),
     },
   }).then(normalizeTranOutput),
+  createTranOutlookDraft: (
+    assets,
+    sourceBindings,
+    mailArtifactHandle,
+    bodyIntro,
+    processingDate,
+    yearSheet,
+    signal,
+  ) => request(API.tranOutlookDrafts, {
+    method: "POST",
+    signal,
+    body: {
+      assets,
+      source_bindings: sourceBindings,
+      mail_artifact_handle: mailArtifactHandle,
+      body_intro: bodyIntro,
+      ...(processingDate ? { processing_date: processingDate } : {}),
+      ...(yearSheet ? { year_sheet: yearSheet } : {}),
+    },
+  }).then(normalizeTranOutlookOutput),
+  m365Status: (role, signal) => request(m365Path(role, "/status"), { signal })
+    .then((raw) => normalizeM365Status(raw, role)),
+  connectM365: (role, signal) => request(m365Path(role, "/connect"), {
+    method: "POST",
+    signal,
+    body: { return_to: "/" },
+  }).then((raw) => ({
+    ...raw,
+    authorization_url: safeExternalUrl(
+      raw?.authorization_url,
+      new Set(["login.microsoftonline.com"]),
+    ),
+  })),
+  disconnectM365: (role, signal) => request(m365Path(role, "/disconnect"), {
+    method: "POST",
+    signal,
+    headers: { "X-Asset-Hub-Action": "m365-disconnect-v1" },
+    body: {},
+  }),
+  m365Folders: (role, signal) => request(m365Path(role, "/folders"), { signal })
+    .then((raw) => ({
+      ...raw,
+      folders: Array.isArray(raw?.folders)
+        ? raw.folders.map(normalizeM365Folder).filter(Boolean)
+        : [],
+    })),
+  selectM365Folder: (role, folderId, signal) => request(m365Path(role, "/folder"), {
+    method: "POST",
+    signal,
+    body: { folder_id: folderId },
+  }).then((raw) => ({
+    ...raw,
+    selected_folder: normalizeM365Folder(raw?.selected_folder),
+    cursor_ready: raw?.cursor_ready === true,
+  })),
+  syncM365: (role, signal) => request(m365Path(role, "/sync"), {
+    method: "POST",
+    signal,
+    headers: { "X-Asset-Hub-Action": "m365-sync-v1" },
+    body: {},
+  }).then(normalizeM365Sync),
   createIndividualMailPdf: (mailArtifactHandle, signal) => request(API.mailPdfIndividual, {
     method: "POST",
     signal,

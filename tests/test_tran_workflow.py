@@ -6,6 +6,8 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from asset_compensation.adapters import (
     CcdcClassification,
     CcdcWorkbookIndex,
@@ -16,6 +18,7 @@ from asset_compensation.domain import (
     CompensationStatus,
     DepreciationGroup,
     ReferenceStatus,
+    ValidationError,
 )
 from asset_compensation.services import TranAssetRequest, TranWorkflowService
 
@@ -258,3 +261,26 @@ def test_loss_date_defaults_to_injected_today() -> None:
 
     assert result.asset is not None
     assert result.asset.lost_date == date(2026, 2, 3)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"tag_number": "T" * 256},
+        {"asset_name": "A" * 1_025},
+        {"domain": "d" * 254},
+        {"domain": "unsafe\nvalue"},
+        {"confirmed_cost": "1" * 33},
+        {"confirmed_cost": 9_007_199_254_740_992},
+    ],
+)
+def test_tran_request_bounds_fail_before_lookup(overrides: dict[str, object]) -> None:
+    values: dict[str, object] = {
+        "tag_number": "MOU10001",
+        "asset_name": "Synthetic mouse",
+        "domain": "demo.user",
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValidationError):
+        TranAssetRequest(**values)  # type: ignore[arg-type]

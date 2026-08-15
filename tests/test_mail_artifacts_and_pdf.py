@@ -30,6 +30,7 @@ from asset_compensation.services import (
     MailArtifactNotFoundError,
     MailArtifactStore,
     MailPdfService,
+    mail_pdf_service,
     safe_eml_basename,
 )
 
@@ -401,6 +402,31 @@ def test_pdf_merger_keeps_every_page_and_never_clobbers(
     assert destination.read_bytes() == b"5"
 
 
+def test_pdf_merger_uses_a_bounded_temporary_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pdf, "_load_pypdf", lambda: (_FakeReader, _FakeWriter))
+    source = tmp_path / "source.pdf"
+    destination = tmp_path / ("long-final-output-name-" + "x" * 60 + ".pdf")
+    source.write_bytes(b"1")
+    original_named_temporary_file = pdf.tempfile.NamedTemporaryFile
+    observed_prefixes: list[str] = []
+
+    def capture_named_temporary_file(*args: object, **kwargs: object):
+        observed_prefixes.append(str(kwargs.get("prefix", "")))
+        return original_named_temporary_file(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pdf.tempfile, "NamedTemporaryFile", capture_named_temporary_file
+    )
+
+    PypdfMerger().merge([source], destination)
+
+    assert observed_prefixes == [".merge-"]
+    assert destination.read_bytes() == b"1"
+
+
 def test_normalizer_and_merger_with_real_pypdf(tmp_path: Path) -> None:
     from pypdf import PdfReader, PdfWriter
 
@@ -646,6 +672,40 @@ def test_mail_pdf_service_publishes_individual_and_merged_batch_without_raw_eml(
             batch_name="Synthetic Batch",
         )
     assert result.merged_path.read_bytes() == b"2|2"
+
+
+def test_mail_pdf_service_uses_a_bounded_staging_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MailArtifactStore(tmp_path / "private-mail", enabled=True)
+    artifact = store.retain_validated(  # type: ignore[arg-type]
+        _validated_payload("long-name.eml")
+    )
+    service = MailPdfService(
+        store,
+        _FakeConverter(),
+        normalizer=_FakeNormalizer(),
+        merger=_FakeMerger(),
+    )
+    original_mkdtemp = mail_pdf_service.tempfile.mkdtemp
+    observed_prefixes: list[str] = []
+
+    def capture_mkdtemp(*args: object, **kwargs: object) -> str:
+        observed_prefixes.append(str(kwargs.get("prefix", "")))
+        return original_mkdtemp(*args, **kwargs)
+
+    monkeypatch.setattr(mail_pdf_service.tempfile, "mkdtemp", capture_mkdtemp)
+
+    result = service.create_batch(
+        [artifact],
+        tmp_path / "outputs",
+        batch_name="x" * 80,
+    )
+
+    assert observed_prefixes == [".mp-"]
+    assert result.directory.name == "x" * 80
+    assert not list((tmp_path / "outputs").glob(".mp-*"))
 
 
 def test_mail_pdf_service_does_not_publish_partial_batch_on_failure(
