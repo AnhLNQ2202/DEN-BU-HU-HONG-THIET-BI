@@ -6,7 +6,12 @@ from email.message import EmailMessage
 
 import pytest
 
-from asset_compensation.parsers import EmlParser, EmlSkipError, SupplierRecord
+from asset_compensation.parsers import (
+    EmlParseError,
+    EmlParser,
+    EmlSkipError,
+    SupplierRecord,
+)
 from asset_compensation.repositories import SQLiteCaseRepository
 from asset_compensation.services import CaseService
 from asset_compensation.services.ingestion_service import EmailPayload, ingest_eml_payloads
@@ -75,6 +80,82 @@ def _lost_table_message(*, message_id: str = "multi-lost@example.invalid") -> by
             <td>01/01/2020</td><td>01/08/2026</td><td>100</td>
             <td>Không tính đền bù</td><td>-</td><td>-</td><td>Asset</td><td>VNG</td>
             <td>'0603</td><td>'000</td><td>'01</td>
+          </tr>
+        </table></body></html>
+        """,
+        subtype="html",
+    )
+    return message.as_bytes()
+
+
+def _initial_lost_notice_message(
+    *,
+    extra_column: bool = False,
+    omit_rows: bool = False,
+) -> bytes:
+    message = EmailMessage()
+    message["Subject"] = (
+        "IT - Thông tin tài sản thất lạc - DEMO-MOU-201 - demo.user - Đang làm việc"
+    )
+    message["From"] = "Synthetic Asset Team <asset@example.invalid>"
+    message["To"] = "Synthetic Reviewer <reviewer@example.invalid>"
+    message["Date"] = "Thu, 13 Aug 2026 03:49:56 +0000"
+    message["Message-ID"] = "<initial-lost-notice@example.invalid>"
+    message.set_content("Synthetic initial lost-device notification follows.")
+    extra_header = "<th>Ngày nhận</th>" if extra_column else ""
+    extra_cell = "<td>13/08/2026</td>" if extra_column else ""
+    rows = "" if omit_rows else f"""
+            <tr>
+              <td>Synthetic Wireless Mouse</td><td>DEMO-MOU-201</td>
+              <td>Thất lạc</td><td></td>{extra_cell}
+            </tr>
+            <tr>
+              <td>Synthetic Monitor</td><td>DEMO-MON-202</td>
+              <td>Thất lạc</td><td>Second item</td>{extra_cell}
+            </tr>
+    """
+    message.add_alternative(
+        f"""
+        <html><body>
+          <p>Người quản lý thiết bị: demo.user</p>
+          <table>
+            <tr>
+              <th>Tên thiết bị</th><th>Mã thiết bị</th>
+              <th>Tình trạng</th><th>Ghi chú</th>{extra_header}
+            </tr>
+            {rows}
+          </table>
+        </body></html>
+        """,
+        subtype="html",
+    )
+    return message.as_bytes()
+
+
+def _initial_lost_notice_with_invalid_second_row() -> bytes:
+    message = EmailMessage()
+    message["Subject"] = (
+        "IT - Thông tin tài sản thất lạc - DEMO-MOU-201 - demo.user - Đang làm việc"
+    )
+    message["From"] = "Synthetic Asset Team <asset@example.invalid>"
+    message["To"] = "Synthetic Reviewer <reviewer@example.invalid>"
+    message["Date"] = "Thu, 13 Aug 2026 03:49:56 +0000"
+    message["Message-ID"] = "<invalid-initial-lost-notice@example.invalid>"
+    message.set_content("Synthetic initial lost-device notification follows.")
+    message.add_alternative(
+        """
+        <html><body><table>
+          <tr>
+            <th>Tên thiết bị</th><th>Mã thiết bị</th>
+            <th>Tình trạng</th><th>Ghi chú</th>
+          </tr>
+          <tr>
+            <td>Synthetic Wireless Mouse</td><td>DEMO-MOU-201</td>
+            <td>Thất lạc</td><td></td>
+          </tr>
+          <tr>
+            <td>Synthetic Monitor</td><td></td>
+            <td>Thất lạc</td><td>Missing asset code</td>
           </tr>
         </table></body></html>
         """,
@@ -177,6 +258,58 @@ def test_lost_html_table_groups_by_domain_and_preserves_credit_dimensions() -> N
     assert components[2]["entity_non_vng"] is True
     assert beta.domain == "demo.beta"
     assert beta.amount == Decimal("330")
+
+
+def test_initial_lost_notice_table_preserves_asset_names_and_rows() -> None:
+    parsed = EmlParser().parse_bytes_many(_initial_lost_notice_message())
+
+    assert len(parsed) == 1
+    case = parsed[0]
+    assert case.case_type == "LOST"
+    assert case.domain == "demo.user"
+    assert case.asset_code == "DEMO-MOU-201, DEMO-MON-202"
+    assert case.asset_name == "Synthetic Wireless Mouse, Synthetic Monitor"
+    assert case.amount is None
+    assert "missing_amount" in case.warnings
+    assert "loss_date" not in case.metadata
+    assert case.metadata["asset_count"] == 2
+    assert case.metadata["source_table_kind"] == "INITIAL_LOSS_NOTICE"
+    assert case.metadata["asset_rows"] == [
+        {
+            "asset_code": "DEMO-MOU-201",
+            "asset_name": "Synthetic Wireless Mouse",
+            "domain": "demo.user",
+            "reported_status": "Thất lạc",
+            "source_note": "",
+        },
+        {
+            "asset_code": "DEMO-MON-202",
+            "asset_name": "Synthetic Monitor",
+            "domain": "demo.user",
+            "reported_status": "Thất lạc",
+            "source_note": "Second item",
+        },
+    ]
+
+
+def test_initial_lost_notice_parser_does_not_guess_on_a_different_schema() -> None:
+    case = EmlParser().parse_bytes(
+        _initial_lost_notice_message(extra_column=True)
+    )
+
+    assert case.asset_code == "DEMO-MOU-201"
+    assert case.asset_name is None
+    assert "asset_rows" not in case.metadata
+
+
+def test_initial_lost_notice_parser_rejects_the_whole_table_if_one_row_is_invalid() -> None:
+    with pytest.raises(EmlParseError, match="invalid asset row"):
+        EmlParser().parse_bytes_many(_initial_lost_notice_with_invalid_second_row())
+
+
+def test_initial_lost_notice_parser_rejects_a_recognized_empty_table() -> None:
+    with pytest.raises(EmlParseError, match="does not contain any asset rows"):
+        EmlParser().parse_bytes_many(_initial_lost_notice_message(omit_rows=True))
 
 
 def test_ingestion_persists_all_cases_stably_and_marks_inactive_metadata(tmp_path) -> None:

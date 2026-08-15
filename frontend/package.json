@@ -11,7 +11,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "vite build --emptyOutDir=false"
+    "check": "vite build --emptyOutDir=false",
+    "test": "node --test"
   },
   "dependencies": {
     "react": "18.3.1",

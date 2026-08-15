@@ -142,6 +142,37 @@ p {
   line-height: 1.25;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.outlook-connections-trigger {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--vng-navy);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--vng-navy);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.outlook-connections-trigger:hover,
+.outlook-connections-trigger[aria-expanded="true"] {
+  background: var(--vng-blue-tint);
+}
+
+.outlook-connections-trigger svg {
+  width: 17px;
+  height: 17px;
+}
+
 .lang-dropdown,
 .tab-dropdown {
   position: relative;
@@ -758,6 +789,44 @@ label.small {
   width: 100%;
 }
 
+.supplier-file-picker {
+  width: 100%;
+}
+
+.supplier-detection {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.supplier-detection > div {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-alt);
+}
+
+.supplier-detection > div.is-ready {
+  border-color: #b8dcc5;
+  background: #f1f8f2;
+}
+
+.supplier-detection > div.is-missing {
+  border-color: #ead59a;
+  background: var(--vng-yellow-tint);
+}
+
+.supplier-detection > div span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.supplier-detection > div strong {
+  font-size: 12px;
+}
+
 .upload-file-field small {
   min-height: 18px;
   overflow-wrap: anywhere;
@@ -889,6 +958,61 @@ label.small {
   color: #6f5310;
 }
 
+.upload-details {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+}
+
+.upload-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.upload-details summary strong {
+  color: inherit;
+  font-size: 11px;
+}
+
+.upload-details summary::after {
+  content: "▾";
+  flex: 0 0 auto;
+  transition: transform 0.15s ease;
+}
+
+.upload-details[open] summary::after {
+  transform: rotate(180deg);
+}
+
+.upload-details ul {
+  max-height: 180px;
+  margin: 0;
+  padding: 0 12px 9px 28px;
+  overflow-y: auto;
+}
+
+.upload-details li {
+  overflow-wrap: anywhere;
+}
+
+.upload-details li small {
+  margin-left: 6px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.supplier-selection-details {
+  grid-column: 1 / -1;
+}
+
 .upload-feedback-list.is-error {
   background: #fff0ed;
   color: var(--danger);
@@ -910,7 +1034,7 @@ label.small {
 
 .selected-upload-files {
   display: grid;
-  gap: 2px;
+  gap: 6px;
   color: var(--muted);
   font-size: 11.5px;
 }
@@ -1791,6 +1915,81 @@ label.small {
   max-height: calc(100vh - 32px);
 }
 
+.outlook-connections-dialog {
+  width: min(1120px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+}
+
+.outlook-connections-surface {
+  display: grid;
+  max-height: calc(100vh - 32px);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.outlook-connections-dialog .dialog__header {
+  background: var(--surface);
+}
+
+.outlook-connections-dialog .dialog__header p {
+  max-width: 760px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.outlook-connections-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.outlook-role-switcher {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+
+.outlook-role-switcher button {
+  min-height: 34px;
+  padding: 6px 18px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.outlook-role-switcher button:hover,
+.outlook-role-switcher button.is-active {
+  background: var(--surface);
+  color: var(--vng-orange-dark);
+  box-shadow: var(--shadow);
+}
+
+.outlook-role-pane {
+  display: grid;
+}
+
+.outlook-role-pane[hidden] {
+  display: none;
+}
+
+.outlook-role-pane > .panel:last-child {
+  margin-bottom: 0;
+}
+
+.outlook-role-intro {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border-left: 4px solid var(--vng-orange);
+  border-radius: 6px;
+  background: var(--vng-orange-tint);
+  font-size: 12px;
+}
+
 .dialog__surface,
 .drawer__shell {
   overflow: hidden;
@@ -2248,8 +2447,35 @@ label.small {
     font-size: 17px;
   }
 
-  .lang-dropdown {
+  .topbar-actions {
     margin-left: auto;
+  }
+
+  .outlook-connections-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .outlook-connections-surface {
+    max-height: calc(100vh - 16px);
+  }
+
+  .outlook-connections-dialog .dialog__header,
+  .outlook-connections-body {
+    padding: 14px;
+  }
+
+  .outlook-role-switcher {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .supplier-detection {
+    grid-template-columns: 1fr;
+  }
+
+  .supplier-selection-details {
+    grid-column: auto;
   }
 
   .connection-text {

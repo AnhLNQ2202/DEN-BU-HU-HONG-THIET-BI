@@ -5,8 +5,6 @@ import { translate } from "../i18n.js";
 import { suggestedBatchName } from "../utils.js";
 import { CaseTable } from "./CaseTable.jsx";
 import { MailPdfPanel } from "./MailPdfPanel.jsx";
-import { M365MailboxPanel } from "./M365MailboxPanel.jsx";
-import { OutlookCompanionPanel } from "./OutlookCompanionPanel.jsx";
 import { UploadWorkspace } from "./UploadWorkspace.jsx";
 
 export { TranWorkspace } from "./TranWorkspace.jsx";
@@ -25,7 +23,6 @@ export function NganWorkspace({
   onClearTestData,
   onCreateMailPdf,
   onEmailUpload,
-  onMailboxSynced,
   onOpenBatch,
   onOpenCase,
   onReset,
@@ -78,21 +75,6 @@ export function NganWorkspace({
         onEmailUpload={onEmailUpload}
         onReset={onReset}
         onSupplierUpload={onSupplierUpload}
-      />
-
-      <M365MailboxPanel
-        capabilities={capabilities}
-        language={language}
-        onSynced={onMailboxSynced}
-        refreshVersion={testDataClearVersion}
-        role="ngan"
-      />
-
-      <OutlookCompanionPanel
-        capabilities={capabilities}
-        language={language}
-        refreshVersion={testDataClearVersion}
-        role="ngan"
       />
 
       <section className="panel operation-panel">
