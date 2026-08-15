@@ -32,6 +32,7 @@ from .pdf import (
     prepare_eml_document,
 )
 from .tran_mail import (
+    TRAN_MAIL_HEADERS,
     TranMailDraftBuilder,
     TranMailDraftResult,
     TranMailError,
@@ -85,6 +86,7 @@ __all__ = [
     "FaGlLookup",
     "FaGlRecord",
     "FaGlWorkbookIndex",
+    "TRAN_MAIL_HEADERS",
     "TRAN_SENT_HEADERS",
     "TRAN_YEAR_HEADERS",
     "TranMailDraftBuilder",

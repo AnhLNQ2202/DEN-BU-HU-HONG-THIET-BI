@@ -121,6 +121,13 @@ The destination must be new and retain the source `.xlsx`/`.xlsm` suffix. The ex
    alignment, date, and money formats;
 6. saves atomically and verifies the output before publishing it.
 
+The bundled fallback workbook is a data-free, layout/style-preserving derivative of the private
+reference template, not a redesigned spreadsheet and not a byte-identical copy. It keeps the
+four-sheet order, hidden helper state, active `2026` sheet, `A3:Y132` auto-filter, workbook/sheet
+views, page setup, year instructions/header/style archetype and the `Sent out` layout. Private case
+rows, helper values, drawings, document metadata, external relationships and active content are
+removed. The private source workbook remains outside Git and is never overwritten.
+
 The exporter rejects unresolved or `NEEDS_REVIEW` items. Formula values copied into `Sent out`
 come from the verified Python calculation, so no hidden Excel recalculation is required to build
 the mail table.
@@ -141,11 +148,16 @@ draft = TranMailDraftBuilder().build(
 )
 ```
 
-The HTML table escapes all source values. The draft preserves reply-thread headers, builds
-reply-all recipients while excluding the operator address, attaches the workbook, sets
-`X-Unsent: 1`, and writes a new RFC822 file atomically. `body_intro` is mandatory because the
-original rule says to ask for a mail template rather than invent one. Sending remains a separate,
-explicitly authorized action and is not implemented here.
+The HTML table escapes all source values and uses the exact mail-facing template: 15 labels that
+are intentionally separate from the internal `Sent out` headers, `#9CC2E5` header cells, a
+`#FFFF00` total-amount column, black 1 px borders, Arial 12 px, 4 px × 8 px padding,
+column-specific alignment and a bold Total row summing G/H/I. The draft preserves reply-thread
+headers, builds reply-all recipients while excluding the operator address, attaches the workbook,
+sets `X-Unsent: 1`, and writes a new RFC822 file atomically. `body_intro` is mandatory because the
+original rule says to ask for approved prose rather than invent one. The selected original email
+is appended as escaped visible text capped at 100,000 characters; active HTML, forms, scripts,
+events and remote resources are discarded. Sending remains a separate, explicitly authorized
+action and is not implemented here.
 
 ## Current external-data gap
 
@@ -158,9 +170,11 @@ real Define/CMDB verification for FA-not-found or legacy barcodes.
 ## Test strategy
 
 - Unit: 30/360 boundaries, half-up rounding, schedules, exemption order, zero-cost and unknown
-  classification decisions, formula text, HTML escaping, and recipient de-duplication.
+  classification decisions, formula text, exact HTML style/header/alignment/total contract,
+  source-quote sanitization/bounds, and recipient de-duplication.
 - Integration: synthetic four-sheet FA lookup, synthetic Define/CMDB/BC Xuatkho lookup, complete
-  resolution, template-preserving output, request-only Sent out, and parseable RFC822 attachment.
+  resolution, template-preserving output, request-only Sent out, parseable RFC822 attachment, and
+  bundled-template view/filter/style/privacy invariants.
 - Safety: ambiguous references, unresolved data, formula injection, source/output no-clobber, and
   missing/invalid workbook contracts.
 

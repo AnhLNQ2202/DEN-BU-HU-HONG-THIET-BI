@@ -114,7 +114,15 @@ created while disabled.
 operator-approved `body_intro`, and the optional workbook date/sheet fields.
 It requires `ASSET_HUB_DRAFT_FROM_ADDRESS`. The response returns separate
 workbook and `.eml` draft download URLs. The draft has `X-Unsent: 1`; the
-product exposes no send endpoint and never starts Outlook.
+product exposes no send endpoint and never starts Outlook. Its HTML table uses
+the approved, mail-facing TranNNB 15-column labels and formatting rather than
+the internal `Sent out` header names: `#9CC2E5` header cells, a `#FFFF00`
+total-amount column, black 1 px borders, Arial 12 px, 4 px × 8 px padding,
+column-specific alignment and a bold Total row summing G/H/I. `body_intro` is
+required and is never silently replaced with a sample salutation. The selected
+source email is quoted below the new content as escaped visible text capped at
+100,000 characters; source HTML, scripts, forms, event attributes and remote
+resources are not copied into the draft.
 
 ## Individual and batch PDF
 

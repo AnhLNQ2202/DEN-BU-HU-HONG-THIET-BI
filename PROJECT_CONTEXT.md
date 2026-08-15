@@ -73,7 +73,7 @@ git branch --show-current
 git log -5 --oneline --decorate
 git remote -v
 gh auth status
-gh pr view 3 --json url,state,isDraft,headRefName,statusCheckRollup
+gh pr list --head (git branch --show-current) --state all
 ```
 
 Xác định thư mục gốc mà không hard-code username máy:
@@ -227,7 +227,14 @@ Chi tiết:
 5. Khi tất cả ready, xuất workbook mới theo template Tran và rebuild `Sent out`
    chỉ từ request hiện tại.
 6. Nếu retention + sender đã cấu hình, tạo draft RFC822 Reply-All với `X-Unsent: 1`.
-   Product không có send endpoint.
+   Product không có send endpoint. Bảng HTML dùng contract mail 15 cột riêng của
+   TranNNB (không dùng lại tên header nội bộ của `Sent out`): header `#9CC2E5`,
+   cột tổng tiền `#FFFF00`, border đen 1 px, Arial 12 px, padding 4 px × 8 px,
+   alignment theo từng nhóm cột và dòng Total in đậm cộng G/H/I đúng mẫu gốc.
+   Lời mở đầu luôn do operator nhập nội dung đã được duyệt; product không tự thêm
+   `Dear all` hoặc câu mẫu. Mail nguồn được quote bên dưới dưới dạng text đã escape,
+   tối đa 100.000 ký tự; HTML chủ động, form, script và tài nguyên từ xa của mail
+   nguồn không được đưa nguyên trạng vào draft.
 7. Cùng retained EML có thể dùng cho PDF. Draft của một nhóm nhiều tài sản chỉ
    cho phép khi mọi dòng dùng cùng source handle.
 
@@ -286,7 +293,7 @@ Chi tiết:
 | `frontend/src/components/CaseTable.jsx` | Filtered case table and selection |
 | `frontend/src/components/CaseDrawer.jsx` | Detail, metadata and status audit timeline |
 | `frontend/src/components/BatchDialog.jsx` | Batch validation, actor, invoice start |
-| `src/asset_compensation/templates/*.xlsx` | Hai template synthetic, data-free, runtime fallback |
+| `src/asset_compensation/templates/*.xlsx` | Accounting template synthetic sạch và Tran template giữ layout/style gốc nhưng đã loại toàn bộ dữ liệu vận hành |
 | `src/asset_compensation/web/static/dist/` | Generated Vite bundle served by Flask |
 
 ## 6. Domain model, trạng thái và persistence
@@ -649,10 +656,22 @@ không mất precision qua JavaScript `Number`.
 
 - Built-in: `src/asset_compensation/templates/tran_compensation_template.xlsx`.
 - External approved: `ASSET_HUB_TRAN_TEMPLATE`.
+- Built-in Tran workbook là derivative đã làm sạch từ template gốc ngoài repo,
+  **không phải** workbook tự thiết kế lại và không byte-identical với nguồn. File
+  nguồn không bị sửa. Derivative giữ đúng thứ tự bốn sheet, `writeoff t11` hidden,
+  active sheet `2026`, auto-filter `A3:Y132`, zoom/page setup, row/column dimensions,
+  row 2 hướng dẫn, row 3 header, row 4 style archetype và layout `Sent out`.
+  `writeoff t11`/`Sheet1` chỉ giữ compatibility nhưng rỗng; mọi case row, drawing,
+  metadata, link ngoài và active content đã bị loại.
 - Export append vào year sheet hợp lệ và rebuild `Sent out` từ current request.
 - Source template không bao giờ bị ghi đè.
-- Mail table là escaped HTML từ 15-column `Sent out`, có totals.
-- Draft attach workbook mới và không gửi.
+- `Sent out` giữ 15 cột D:R, header Arial 10 bold/light-blue, border/alignment/date/
+  money format đúng template và dòng Total ngay sau dữ liệu request hiện tại.
+- Mail table là escaped HTML dùng contract mail-facing riêng: header `#9CC2E5`,
+  cột tổng tiền `#FFFF00`, border `1px solid #000`, Arial 12 px, padding 4 px ×
+  8 px, alignment theo cột và Total bold với tổng G/H/I.
+- Draft attach workbook mới, giữ Reply-All/thread headers, quote source thành inert
+  text có giới hạn và không gửi. `body_intro` bắt buộc do operator cung cấp.
 
 ### 10.3 Macro/security boundary
 

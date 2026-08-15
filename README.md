@@ -4,8 +4,8 @@
 
 Asset Compensation Hub replaces a fragile chain of email parsing, manual case
 tracking and spreadsheet generation with one modular product. The dashboard is
-implemented in React while the original accounting-import template remains the
-output contract.
+implemented in React while the original accounting-import and TranNNB workbook/
+mail templates remain the output contracts.
 
 For a complete handoff to a new developer or AI—including current GitHub/Render
 state, non-negotiable product decisions, every workflow, business rules, API,
@@ -97,6 +97,12 @@ To preserve the exact approved `.xlsx` or `.xlsm` output—including VBA when
 present—set `ASSET_HUB_ACCOUNTING_TEMPLATE` to that template's absolute path.
 The repository ships a data-free `.xlsx` copy with the same sheet and 30-column
 layout for demo and CI. Keep the operational template outside Git.
+
+The bundled Tran workbook is a data-free, layout/style-preserving derivative of
+the private reference template. It keeps the approved sheet order, active/hidden
+state, views, filter, year-sheet archetype and `Sent out` layout while removing
+all operational rows, helper values, metadata, drawings and active/external
+content. The source workbook remains outside Git and is never overwritten.
 
 VBA preservation is compatibility, not a security endorsement. Have IT/Finance
 review and sign any operational macro project before configuring it on a shared

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -173,17 +173,87 @@ def test_export_appends_year_rows_and_rebuilds_request_only_sent_out(tmp_path: P
             TRAN_SENT_HEADERS
         )
         assert sent.max_row == 4
-        assert sent["A2"].value == "MOU10001"
+        assert tuple(sent.cell(2, column).value for column in range(1, 16)) == (
+            calculated.asset.tag_number,
+            calculated.asset.asset_name,
+            calculated.asset.domain,
+            datetime.combine(calculated.asset.start_date, datetime.min.time()),
+            datetime.combine(calculated.asset.lost_date, datetime.min.time()),
+            int(calculated.asset.cost),
+            calculated.preview.remaining_value,
+            calculated.preview.fee_value,
+            calculated.preview.total_amount,
+            calculated.preview.usage_months,
+            calculated.asset.book,
+            calculated.asset.entity,
+            calculated.asset.cost_center,
+            calculated.asset.product_code,
+            calculated.asset.location,
+        )
+        assert tuple(sent.cell(3, column).value for column in range(1, 16)) == (
+            exempt.asset.tag_number,
+            exempt.asset.asset_name,
+            exempt.asset.domain,
+            datetime.combine(exempt.asset.start_date, datetime.min.time()),
+            datetime.combine(exempt.asset.lost_date, datetime.min.time()),
+            int(exempt.asset.cost),
+            "Không tính đền bù",
+            None,
+            None,
+            exempt.preview.usage_months,
+            exempt.asset.book,
+            exempt.asset.entity,
+            exempt.asset.cost_center,
+            exempt.asset.product_code,
+            exempt.asset.location,
+        )
         assert sent["G2"].data_type == "n"
         assert sent["G2"].value == calculated.preview.remaining_value
         assert sent["G3"].value == "Không tính đền bù"
         assert sent["G4"].value == "=SUM(G2:G3)"
         assert sent["I4"].value == "=SUM(I2:I3)"
-        assert sent["A1"].font.name == "Arial"
-        assert sent["A1"].fill.fgColor.theme == 4
-        assert sent["A1"].border.left.style == "thin"
+        for cell in sent[1][:15]:
+            assert cell.font.name == "Arial"
+            assert cell.font.sz == 10
+            assert cell.font.bold is True
+            assert cell.fill.fgColor.theme == 4
+            assert cell.fill.fgColor.tint == pytest.approx(0.7999)
+            assert cell.alignment.horizontal == "center"
+            assert cell.alignment.vertical == "center"
+            assert cell.alignment.wrap_text is True
+            assert tuple(
+                getattr(cell.border, edge).style
+                for edge in ("left", "right", "top", "bottom")
+            ) == ("thin", "thin", "thin", "thin")
+        for row in range(2, 4):
+            for column in range(1, 16):
+                cell = sent.cell(row, column)
+                assert cell.font.name == "Arial"
+                assert cell.font.sz == 10
+                assert cell.alignment.vertical == "center"
+                assert tuple(
+                    getattr(cell.border, edge).style
+                    for edge in ("left", "right", "top", "bottom")
+                ) == ("thin", "thin", "thin", "thin")
+            assert all(
+                sent.cell(row, column).alignment.horizontal is None
+                for column in (1, 2, 3)
+            )
+            assert all(
+                sent.cell(row, column).alignment.horizontal == "right"
+                for column in (4, 5, 6, 7, 8, 9)
+            )
+            assert all(
+                sent.cell(row, column).alignment.horizontal == "center"
+                for column in (10, 11, 12, 13, 14, 15)
+            )
         assert sent["D2"].number_format == "dd/mm/yyyy"
+        assert sent["E2"].number_format == "dd/mm/yyyy"
         assert sent["F2"].number_format == "#,##0"
+        assert all(
+            sent.cell(2, column).number_format == "#,##0"
+            for column in (6, 7, 8, 9)
+        )
         assert sent["B4"].font.bold is True
     finally:
         workbook.close()
@@ -253,6 +323,8 @@ def test_export_lists_verified_nonphysical_item_without_inventing_reference_valu
         assert workbook["2026"]["I5"].value is None
         assert workbook["2026"]["J5"].value == "Không áp dụng"
         assert workbook["Sent out"]["G2"].value == "Không áp dụng"
+        assert workbook["Sent out"]["H2"].value is None
+        assert workbook["Sent out"]["I2"].value is None
     finally:
         workbook.close()
 
@@ -262,14 +334,33 @@ def test_sanitized_built_in_template_is_export_ready_and_contains_no_case_data(
 ) -> None:
     template = load_workbook(_BUILT_IN_TRAN_TEMPLATE, data_only=False)
     try:
+        assert template.sheetnames == ["writeoff t11", "2026", "Sent out", "Sheet1"]
+        assert template.active.title == "2026"
+        assert template["writeoff t11"].sheet_state == "hidden"
+        assert template["writeoff t11"]["A1"].value is None
+        assert template["writeoff t11"]["A2"].value is None
+        assert template["Sheet1"]["A1"].value is None
         year = template["2026"]
         assert tuple(year.cell(3, column).value for column in range(1, 23)) == (
             TRAN_YEAR_HEADERS
         )
         assert all(year.cell(4, column).value is None for column in range(1, 23))
+        assert year.auto_filter.ref == "A3:Y132"
+        assert year.page_setup.orientation == "portrait"
+        assert year.row_dimensions[3].height == pytest.approx(53.25)
+        assert year.row_dimensions[4].height == pytest.approx(14.25)
+        assert year["A3"].font.name == "Calibri"
+        assert year["A3"].font.sz == 11
+        sent = template["Sent out"]
         assert tuple(
-            template["Sent out"].cell(1, column).value for column in range(1, 16)
+            sent.cell(1, column).value for column in range(1, 16)
         ) == TRAN_SENT_HEADERS
+        assert sent.sheet_view.zoomScale == 85
+        assert sent.page_setup.orientation == "portrait"
+        assert sent.row_dimensions[1].height == pytest.approx(72)
+        assert sent["A1"].font.name == "Arial"
+        assert sent["A1"].font.sz == 10
+        assert sent["A1"].font.bold is True
     finally:
         template.close()
 
@@ -281,6 +372,10 @@ def test_sanitized_built_in_template_is_export_ready_and_contains_no_case_data(
     assert result.request_rows == (4,)
     workbook = load_workbook(output, data_only=False)
     try:
+        assert workbook.active.title == "2026"
+        assert workbook["writeoff t11"].sheet_state == "hidden"
+        assert workbook["2026"].auto_filter.ref == "A3:Y132"
+        assert workbook["Sent out"].sheet_view.zoomScale == 85
         assert workbook["2026"]["D4"].value == "MOU10001"
         assert workbook["2026"]["J4"].data_type == "f"
         assert workbook["Sent out"]["A2"].value == "MOU10001"
