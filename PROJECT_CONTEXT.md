@@ -47,16 +47,17 @@ Snapshot này được lập ngày **2026-08-15**:
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
 | Branch tích hợp | `agent/react-trannnb-team-dev` |
-| Commit product đã deploy | `714253ae4888acade49933826bb66bcb509ffcbb` |
-| Draft PR | [PR #3](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/3) |
+| Commit template/Draft Mail đã publish | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
+| `main` tại snapshot | `c8807c830e46f588990bd2aeb222c2946dc849aa` |
+| Draft PR hiện tại | [PR #5](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/5) |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Render deploy | `714253a` ở trạng thái `live` |
+| Render deploy quan sát gần nhất | `e67f08b`; thay đổi `9e17959` **chưa deploy** tại snapshot |
 | Health | `/api/health` trả `200`; `/` không có auth trả `401` |
-| CI | Hai check `quality` của PR ở commit trên đều `SUCCESS` |
-| CI Linux exact commit | 199 test pass, 85% statement coverage |
-| QA Windows độc lập | 197 pass, 2 skip theo capability/privilege môi trường |
+| CI | Hai check `quality` của PR #5 trên exact commit đều `SUCCESS` |
+| CI Linux exact commit | 251 test pass, 85% statement coverage |
+| QA Windows độc lập | 249 pass, 2 skip theo capability/privilege môi trường |
 | Frontend | Vite build ổn định, 47 modules |
 | Release verdict | Đủ điều kiện staging; chưa phải production multi-user |
 
@@ -73,7 +74,7 @@ git branch --show-current
 git log -5 --oneline --decorate
 git remote -v
 gh auth status
-gh pr view 3 --json url,state,isDraft,headRefName,statusCheckRollup
+gh pr list --head (git branch --show-current) --state all
 ```
 
 Xác định thư mục gốc mà không hard-code username máy:
@@ -227,7 +228,14 @@ Chi tiết:
 5. Khi tất cả ready, xuất workbook mới theo template Tran và rebuild `Sent out`
    chỉ từ request hiện tại.
 6. Nếu retention + sender đã cấu hình, tạo draft RFC822 Reply-All với `X-Unsent: 1`.
-   Product không có send endpoint.
+   Product không có send endpoint. Bảng HTML dùng contract mail 15 cột riêng của
+   TranNNB (không dùng lại tên header nội bộ của `Sent out`): header `#9CC2E5`,
+   cột tổng tiền `#FFFF00`, border đen 1 px, Arial 12 px, padding 4 px × 8 px,
+   alignment theo từng nhóm cột và dòng Total in đậm cộng G/H/I đúng mẫu gốc.
+   Lời mở đầu luôn do operator nhập nội dung đã được duyệt; product không tự thêm
+   `Dear all` hoặc câu mẫu. Mail nguồn được quote bên dưới dưới dạng text đã escape,
+   tối đa 100.000 ký tự; HTML chủ động, form, script và tài nguyên từ xa của mail
+   nguồn không được đưa nguyên trạng vào draft.
 7. Cùng retained EML có thể dùng cho PDF. Draft của một nhóm nhiều tài sản chỉ
    cho phép khi mọi dòng dùng cùng source handle.
 
@@ -286,7 +294,7 @@ Chi tiết:
 | `frontend/src/components/CaseTable.jsx` | Filtered case table and selection |
 | `frontend/src/components/CaseDrawer.jsx` | Detail, metadata and status audit timeline |
 | `frontend/src/components/BatchDialog.jsx` | Batch validation, actor, invoice start |
-| `src/asset_compensation/templates/*.xlsx` | Hai template synthetic, data-free, runtime fallback |
+| `src/asset_compensation/templates/*.xlsx` | Accounting template synthetic sạch và Tran template giữ layout/style gốc nhưng đã loại toàn bộ dữ liệu vận hành |
 | `src/asset_compensation/web/static/dist/` | Generated Vite bundle served by Flask |
 
 ## 6. Domain model, trạng thái và persistence
@@ -649,10 +657,22 @@ không mất precision qua JavaScript `Number`.
 
 - Built-in: `src/asset_compensation/templates/tran_compensation_template.xlsx`.
 - External approved: `ASSET_HUB_TRAN_TEMPLATE`.
+- Built-in Tran workbook là derivative đã làm sạch từ template gốc ngoài repo,
+  **không phải** workbook tự thiết kế lại và không byte-identical với nguồn. File
+  nguồn không bị sửa. Derivative giữ đúng thứ tự bốn sheet, `writeoff t11` hidden,
+  active sheet `2026`, auto-filter `A3:Y132`, zoom/page setup, row/column dimensions,
+  row 2 hướng dẫn, row 3 header, row 4 style archetype và layout `Sent out`.
+  `writeoff t11`/`Sheet1` chỉ giữ compatibility nhưng rỗng; mọi case row, drawing,
+  metadata, link ngoài và active content đã bị loại.
 - Export append vào year sheet hợp lệ và rebuild `Sent out` từ current request.
 - Source template không bao giờ bị ghi đè.
-- Mail table là escaped HTML từ 15-column `Sent out`, có totals.
-- Draft attach workbook mới và không gửi.
+- `Sent out` giữ 15 cột D:R, header Arial 10 bold/light-blue, border/alignment/date/
+  money format đúng template và dòng Total ngay sau dữ liệu request hiện tại.
+- Mail table là escaped HTML dùng contract mail-facing riêng: header `#9CC2E5`,
+  cột tổng tiền `#FFFF00`, border `1px solid #000`, Arial 12 px, padding 4 px ×
+  8 px, alignment theo cột và Total bold với tổng G/H/I.
+- Draft attach workbook mới, giữ Reply-All/thread headers, quote source thành inert
+  text có giới hạn và không gửi. `body_intro` bắt buộc do operator cung cấp.
 
 ### 10.3 Macro/security boundary
 
@@ -901,9 +921,12 @@ Checklist authenticated:
 6. Upload FA&GL/CCDC synthetic, resolve/export/draft.
 7. Clear test data và xác nhận dashboard/reference về empty.
 
-Snapshot 2026-08-15 đã xác nhận deploy live, health 200, auth 401, Gunicorn boot
-và WeasyPrint 68.1 được cài. Authenticated cloud workflow chưa được automation
-chạy vì AI không đọc/chia sẻ secret Basic Auth; operator cần chạy checklist trên.
+Snapshot 2026-08-15 đã xác nhận deploy đang live ở commit cũ `e67f08b`, health
+200, auth 401, Gunicorn boot và WeasyPrint 68.1 được cài. Commit template/Draft
+Mail `9e17959` đã push/CI xanh nhưng chưa Manual Deploy. Authenticated cloud
+workflow chưa được automation chạy vì AI không đọc/chia sẻ secret Basic Auth;
+operator cần chạy checklist trên. Manual Deploy/redeploy có thể xóa toàn bộ dữ
+liệu `/tmp/asset-hub-staging`, nên phải lấy xác nhận của user ngay trước thao tác.
 
 ### 14.3 GreenNode
 
@@ -958,15 +981,17 @@ error, responsive và console. Nếu thay workbook/PDF: mở artifact thật b�
 6. production Docker build;
 7. GreenNode Compose config validation.
 
-Không push release khi CI của exact commit chưa xanh. Render staging dùng
-`autoDeployTrigger: checksPass`.
+Không push release khi CI của exact commit chưa xanh. Blueprint khai báo
+`autoDeployTrigger: checksPass`, nhưng Render Console hiện được vận hành theo
+Manual Deploy; không được suy ra rằng push GitHub đã làm code mới lên staging.
 
 ### 15.3 Bằng chứng release gần nhất
 
 - Independent QA: không còn P0/P1, verdict staging conditional.
-- CI Linux của exact commit: 199 pass trong 26,80 giây, 85% coverage (5.993
-  statements, 917 missed).
-- QA Windows độc lập: 197 pass; 2 skip là native Weasy/Pango hoặc symlink
+- CI Linux của exact commit `9e17959`: 251 pass trong 29,23 giây, 85% coverage
+  (6.476 statements, 967 missed); frontend, Ruff, production Docker build và
+  GreenNode Compose validation cùng workflow đều xanh.
+- QA Windows độc lập: 249 pass; 2 skip là native Weasy/Pango hoặc symlink
   privilege tùy host, không phải test failure.
 - Vite build hai lần byte-for-byte ổn định tại snapshot.
 - Local UI smoke giữ logo/title/orange tabs/six cards/dark table/layout ở 1440 px,
@@ -975,8 +1000,9 @@ Không push release khi CI của exact commit chưa xanh. Render staging dùng
   hiện tại sinh một case, synthetic tests bao phủ multi-case; Word tạo PDF 2–4
   trang/mail; fail-on-overflow không bỏ trang; retry 4 pages tạo merged 20-page
   readable PDF. Exact amounts/identities bị cố ý không đưa vào repo này.
-- Template scans: chỉ hai sanitized `.xlsx`, không VBA/externalLinks/embedding/
-  ActiveX/OLE/customXml/PII.
+- Template scans: chỉ hai sanitized `.xlsx`; Tran template giữ active/hidden
+  sheet state, filter/view/page setup và style gốc nhưng không có VBA,
+  externalLinks, embedding, ActiveX/OLE, customXml, email pattern hay case data.
 
 ### 15.4 Khoảng trống automation hiện tại
 
@@ -1050,7 +1076,7 @@ giới hạn/next step, không được quảng bá là đã production-ready:
 
 1. Operator đăng nhập staging và chạy synthetic end-to-end cloud PDF + Tran;
    automation không được lấy secret từ Render.
-2. Review draft PR #3, merge vào `main` khi owner chấp thuận; sau merge tạo/tag
+2. Review draft PR #5, merge vào `main` khi owner chấp thuận; sau merge tạo/tag
    release nếu cần cho hackathon.
 3. UAT bằng approved operational accounting template/config trên môi trường
    private; Finance xác nhận 30-column output và GL mapping.

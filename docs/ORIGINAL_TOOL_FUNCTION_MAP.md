@@ -62,8 +62,8 @@ not sufficient.
 | `fmt_money` | Render whole-VND values | `DONE`: shared Tran mail-table formatter. |
 | `fmt_date` | Render `dd/mm/yyyy` | `DONE`: shared Tran mail-table formatter. |
 | `clean_text` | Normalize blank/quoted identifiers | `DONE`: shared Tran mail-table formatter. |
-| `build_table` | Build the 15-column Sent-out HTML table and totals | `DONE`: escaped 15-column HTML table with totals. |
-| `main` | Read `Sent out` and write mail-body HTML | `DONE`: the Tran flow produces a downloadable unsent RFC822 draft from the current export. |
+| `build_table` | Build the 15-column Sent-out HTML table and totals | `DONE`: escaped mail-facing 15-column table with the original labels, blue header, yellow total-amount column, black border, Arial 12 px, per-column alignment and bold G/H/I totals. |
+| `main` | Read `Sent out` and write mail-body HTML | `DONE`: the Tran flow produces a downloadable unsent RFC822 draft from the current export; approved prose remains mandatory operator input. |
 
 ## `draft_mail_outlook.py` — 5 functions
 
@@ -73,7 +73,7 @@ not sufficient.
 | `_iter_folders_2_levels` | Traverse Outlook folders | `RETIRED/EXTERNAL`: no Outlook/MAPI adapter exists in this repository; the product requires explicit source EML selection. |
 | `find_best_mail_by_subject` | Prefer oldest original, else newest reply | `RETIRED`: explicit source-artifact selection removes global mailbox guessing. |
 | nested `_received` | Normalize Outlook received time | `RETIRED`: no mailbox scan occurs in the cloud flow. |
-| `main` | `ReplyAll`, prepend HTML and display a draft | `DONE/EXTERNAL`: product creates a downloadable Reply-All RFC822 draft and never sends automatically. Outlook `Display()` is not implemented; an operator may open the downloaded draft in an approved local client. |
+| `main` | `ReplyAll`, prepend HTML and display a draft | `DONE/EXTERNAL`: product creates a downloadable Reply-All RFC822 draft, quotes the selected source as bounded inert text, and never sends automatically. Outlook `Display()` is not implemented; an operator may open the downloaded draft in an approved local client. |
 
 ## `ghep_mail_pdf_word.py` — 12 functions
 

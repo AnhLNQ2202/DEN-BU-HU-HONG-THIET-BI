@@ -261,10 +261,16 @@ class TranWorkbookAdapter:
         preview = resolution.preview
         assert asset is not None and preview is not None
         remaining: object = preview.remaining_value
+        fee_value: object = preview.fee_value
+        total_amount: object = preview.total_amount
         if preview.status is CompensationStatus.EXEMPT:
             remaining = "Không tính đền bù"
+            fee_value = None
+            total_amount = None
         elif preview.status is CompensationStatus.NOT_APPLICABLE:
             remaining = "Không áp dụng"
+            fee_value = None
+            total_amount = None
         return (
             _safe_text(asset.tag_number),
             _safe_text(asset.asset_name),
@@ -273,8 +279,8 @@ class TranWorkbookAdapter:
             asset.lost_date,
             int(asset.cost) if asset.cost is not None else None,
             remaining,
-            preview.fee_value,
-            preview.total_amount,
+            fee_value,
+            total_amount,
             preview.usage_months,
             _safe_text(asset.book),
             _safe_text(asset.entity),
@@ -310,7 +316,7 @@ class TranWorkbookAdapter:
             fill_type="solid", fgColor=Color(theme=4, tint=0.7999)
         )
         for cell in sheet[1][:15]:
-            cell.font = Font(name="Arial", size=10)
+            cell.font = Font(name="Arial", size=10, bold=True)
             cell.fill = light_blue
             cell.alignment = Alignment(
                 horizontal="center", vertical="center", wrap_text=True
@@ -318,7 +324,10 @@ class TranWorkbookAdapter:
             cell.border = border
         for row in range(2, total_row):
             for column in range(1, 16):
-                sheet.cell(row, column).font = Font(name="Arial", size=10)
+                cell = sheet.cell(row, column)
+                cell.font = Font(name="Arial", size=10)
+                cell.border = border
+                cell.alignment = Alignment(vertical="center")
             for column in (4, 5, 6, 7, 8, 9):
                 sheet.cell(row, column).alignment = Alignment(
                     horizontal="right", vertical="center"

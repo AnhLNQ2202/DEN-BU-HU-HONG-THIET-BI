@@ -4,25 +4,108 @@ from __future__ import annotations
 
 import html
 import os
+import re
 import shutil
 import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email import policy
-from email.message import EmailMessage
+from email.message import EmailMessage, Message
 from email.parser import BytesParser
 from email.utils import format_datetime, getaddresses
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from asset_compensation.domain import CompensationStatus, ValidationError
 
 from .accounting_xlsx import OutputExistsError
-from .tran_workbook import TRAN_SENT_HEADERS
 
 if TYPE_CHECKING:
     from asset_compensation.services.tran_workflow_service import TranResolution
+
+
+# These labels are the approved mail-facing template. They intentionally differ
+# from the internal ``Sent out`` workbook headers, so the two contracts must not
+# share a constant.
+TRAN_MAIL_HEADERS = (
+    "Asset Name",
+    "Product Name",
+    "Domain",
+    "Ngày bắt đầu sử dụng",
+    "Ngày thất lạc/mất",
+    "Nguyên giá ban đầu (vnd)",
+    "Mức khấu hao sử dụng còn lại (vnd)",
+    "Phí đền bù trách nhiệm (vnd)",
+    "Tổng số tiền đền bù (vnd)",
+    "Thời gian đã sử dụng (tháng)",
+    "NOTE",
+    "Entity",
+    "Cost center",
+    "Product code",
+    "Location",
+)
+_MAIL_MONEY_COLUMNS = frozenset({5, 6, 7, 8})
+_MAIL_DATE_COLUMNS = frozenset({3, 4})
+_MAIL_CENTER_COLUMNS = frozenset({2, 9, 10, 11, 12, 13, 14})
+_MAIL_TOTAL_COLUMN = 8
+_MAIL_CELL_STYLE = (
+    "border:1px solid #000;padding:4px 8px;"
+    "font-family:Arial,sans-serif;font-size:12px;"
+)
+_MAIL_HEADER_BACKGROUND = "#9CC2E5"
+_MAIL_TOTAL_BACKGROUND = "#FFFF00"
+_MAX_QUOTED_SOURCE_CHARS = 100_000
+_MAX_SOURCE_HTML_CHARS = 500_000
+_MAX_QUOTED_HEADER_CHARS = 2_000
+_SOURCE_TRUNCATED_MARKER = "\n[quoted source truncated]"
+_HTML_DROP_WITH_CONTENT = frozenset(
+    {
+        "applet",
+        "embed",
+        "form",
+        "head",
+        "iframe",
+        "math",
+        "noscript",
+        "object",
+        "script",
+        "style",
+        "svg",
+        "template",
+    }
+)
+_HTML_BLOCK_TAGS = frozenset(
+    {
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "br",
+        "div",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hr",
+        "li",
+        "main",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "td",
+        "th",
+        "tr",
+        "ul",
+    }
+)
 
 
 class TranMailError(ValidationError):
@@ -76,16 +159,43 @@ def _date_text(value: object) -> str:
     return value.strftime("%d/%m/%Y") if hasattr(value, "strftime") else _mail_text(value)
 
 
+def _clean_display_text(value: object) -> str:
+    text = _mail_text(value)
+    return text[1:] if text.startswith("'") else text
+
+
+def _mail_cell_text(column: int, value: object) -> str:
+    if column in _MAIL_MONEY_COLUMNS:
+        return _money(value)
+    if column in _MAIL_DATE_COLUMNS:
+        return _date_text(value)
+    return _clean_display_text(value)
+
+
+def _mail_cell_alignment(column: int) -> str:
+    if column in _MAIL_CENTER_COLUMNS:
+        return "center"
+    if column in _MAIL_MONEY_COLUMNS or column in _MAIL_DATE_COLUMNS:
+        return "right"
+    return "left"
+
+
 def _resolution_values(resolution: TranResolution) -> tuple[object, ...]:
     asset = resolution.asset
     preview = resolution.preview
     if asset is None or preview is None or preview.status is CompensationStatus.NEEDS_REVIEW:
         raise TranMailError("Every mail-table item must be fully resolved")
     remaining: object = preview.remaining_value
+    fee_value: object = preview.fee_value
+    total_amount: object = preview.total_amount
     if preview.status is CompensationStatus.EXEMPT:
         remaining = "Không tính đền bù"
+        fee_value = None
+        total_amount = None
     elif preview.status is CompensationStatus.NOT_APPLICABLE:
         remaining = "Không áp dụng"
+        fee_value = None
+        total_amount = None
     return (
         asset.tag_number,
         asset.asset_name,
@@ -94,8 +204,8 @@ def _resolution_values(resolution: TranResolution) -> tuple[object, ...]:
         _date_text(asset.lost_date),
         _money(asset.cost),
         _money(remaining),
-        _money(preview.fee_value),
-        _money(preview.total_amount),
+        _money(fee_value),
+        _money(total_amount),
         preview.usage_months if preview.usage_months is not None else "",
         asset.book or "",
         asset.entity or "",
@@ -106,7 +216,7 @@ def _resolution_values(resolution: TranResolution) -> tuple[object, ...]:
 
 
 def build_tran_mail_table(resolutions: Iterable[TranResolution]) -> str:
-    """Return an escaped, inline-styled HTML copy of the request-only Sent out table."""
+    """Return the approved, escaped 15-column TranNNB mail table."""
 
     prepared = list(resolutions)
     if not prepared:
@@ -120,31 +230,192 @@ def build_tran_mail_table(resolutions: Iterable[TranResolution]) -> str:
     )
     total_fee = sum(item.preview.fee_value or 0 for item in prepared if item.preview)
     total_amount = sum(item.preview.total_amount or 0 for item in prepared if item.preview)
-    cell_style = "border:1px solid #777;padding:5px 7px;font-family:Arial;font-size:10pt;"
-    header_style = cell_style + "background:#d9eaf7;text-align:center;font-weight:600;"
-    parts = ['<table role="table" style="border-collapse:collapse;border-spacing:0;">']
-    parts.append("<thead><tr>")
-    parts.extend(
-        f'<th scope="col" style="{header_style}">{html.escape(header)}</th>'
-        for header in TRAN_SENT_HEADERS
+    header_style = (
+        f"{_MAIL_CELL_STYLE}background:{_MAIL_HEADER_BACKGROUND};"
+        "font-weight:bold;text-align:center;"
     )
-    parts.append("</tr></thead><tbody>")
+    parts = ['<table role="table" style="border-collapse:collapse;">', "<tr>"]
+    parts.extend(
+        f'<td role="columnheader" style="{header_style}">{html.escape(header)}</td>'
+        for header in TRAN_MAIL_HEADERS
+    )
+    parts.append("</tr>")
     for row in rows:
         parts.append("<tr>")
-        parts.extend(
-            f'<td style="{cell_style}">{html.escape(_mail_text(value))}</td>' for value in row
-        )
+        for column, value in enumerate(row):
+            background = (
+                f"background:{_MAIL_TOTAL_BACKGROUND};"
+                if column == _MAIL_TOTAL_COLUMN
+                else ""
+            )
+            alignment = _mail_cell_alignment(column)
+            cell_text = html.escape(_mail_cell_text(column, value))
+            parts.append(
+                f'<td style="{_MAIL_CELL_STYLE}{background}'
+                f'text-align:{alignment};">{cell_text}</td>'
+            )
         parts.append("</tr>")
     total_cells: list[object] = ["", "Total:", "", "", "", ""]
     total_cells.extend((_money(total_remaining), _money(total_fee), _money(total_amount)))
     total_cells.extend(("", "", "", "", "", ""))
     parts.append("<tr>")
-    parts.extend(
-        f'<td style="{header_style}">{html.escape(_mail_text(value))}</td>'
-        for value in total_cells
-    )
-    parts.append("</tr></tbody></table>")
+    for column, value in enumerate(total_cells):
+        background = (
+            f"background:{_MAIL_TOTAL_BACKGROUND};"
+            if column == _MAIL_TOTAL_COLUMN
+            else ""
+        )
+        alignment = "right" if column in {6, 7, 8} else "left"
+        parts.append(
+            f'<td style="{_MAIL_CELL_STYLE}{background}font-weight:bold;'
+            f'text-align:{alignment};">{html.escape(_mail_text(value))}</td>'
+        )
+    parts.append("</tr></table>")
     return "".join(parts)
+
+
+def _bounded_source_text(value: object, limit: int) -> str:
+    normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    truncated = len(normalized) > limit
+    safe = "".join(
+        character
+        for character in normalized[: limit + 1]
+        if (ord(character) >= 32 and ord(character) != 127)
+        or character in {"\n", "\t"}
+    )
+    if truncated or len(safe) > limit:
+        return safe[:limit].rstrip() + _SOURCE_TRUNCATED_MARKER
+    return safe.strip()
+
+
+def _bounded_source_header(value: object) -> str:
+    return re.sub(r"\s+", " ", _bounded_source_text(value, _MAX_QUOTED_HEADER_CHARS))
+
+
+class _SafeHtmlTextExtractor(HTMLParser):
+    """Extract bounded visible text without preserving HTML or resource attributes."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._length = 0
+        self._drop_stack: list[str] = []
+
+    def _append(self, value: str) -> None:
+        if not value or self._length >= _MAX_QUOTED_SOURCE_CHARS:
+            return
+        remaining = _MAX_QUOTED_SOURCE_CHARS - self._length
+        chunk = value[:remaining]
+        self._parts.append(chunk)
+        self._length += len(chunk)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del attrs
+        name = tag.casefold()
+        if self._drop_stack:
+            if name in _HTML_DROP_WITH_CONTENT:
+                self._drop_stack.append(name)
+            return
+        if name in _HTML_DROP_WITH_CONTENT:
+            self._drop_stack.append(name)
+            return
+        if name in _HTML_BLOCK_TAGS:
+            self._append("\n")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del attrs
+        name = tag.casefold()
+        if (
+            not self._drop_stack
+            and name not in _HTML_DROP_WITH_CONTENT
+            and name in _HTML_BLOCK_TAGS
+        ):
+            self._append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        name = tag.casefold()
+        if self._drop_stack:
+            if name == self._drop_stack[-1]:
+                self._drop_stack.pop()
+            return
+        if name in _HTML_BLOCK_TAGS:
+            self._append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._drop_stack:
+            self._append(data)
+
+    def text(self) -> str:
+        value = "".join(self._parts).replace("\xa0", " ")
+        value = re.sub(r"[ \t]+\n", "\n", value)
+        value = re.sub(r"\n[ \t]+", "\n", value)
+        value = re.sub(r"\n{3,}", "\n\n", value)
+        return _bounded_source_text(value, _MAX_QUOTED_SOURCE_CHARS)
+
+
+def _message_part_text(part: Message) -> str:
+    try:
+        content = part.get_content()
+    except (AttributeError, LookupError, UnicodeError):
+        payload = part.get_payload(decode=True) or b""
+        charset = part.get_content_charset() or "utf-8"
+        return payload.decode(charset, errors="replace")
+    return content if isinstance(content, str) else ""
+
+
+def _source_body_text(message: EmailMessage) -> str:
+    part = message.get_body(preferencelist=("plain", "html"))
+    if part is None and not message.is_multipart():
+        part = message
+    if part is None:
+        return ""
+    content = _message_part_text(part)
+    if part.get_content_type().casefold() != "text/html":
+        return _bounded_source_text(content, _MAX_QUOTED_SOURCE_CHARS)
+    extractor = _SafeHtmlTextExtractor()
+    try:
+        extractor.feed(content[:_MAX_SOURCE_HTML_CHARS])
+        extractor.close()
+    except Exception:
+        return ""
+    return extractor.text()
+
+
+def _quoted_source(message: EmailMessage) -> tuple[str, str]:
+    header_rows = (
+        ("From", message.get("From")),
+        ("Sent", message.get("Date")),
+        ("To", message.get("To")),
+        ("Cc", message.get("Cc")),
+        ("Subject", message.get("Subject")),
+    )
+    prepared_headers = tuple(
+        (label, text)
+        for label, value in header_rows
+        if (text := _bounded_source_header(value))
+    )
+    body = _source_body_text(message)
+    plain_headers = "\n".join(f"{label}: {value}" for label, value in prepared_headers)
+    plain = "\n\n--- Original message ---\n" + plain_headers
+    if body:
+        plain += f"\n\n{body}"
+
+    html_headers = "".join(
+        f"<div><strong>{html.escape(label)}:</strong> {html.escape(value)}</div>"
+        for label, value in prepared_headers
+    )
+    html_body = (
+        '<div style="margin-top:8px;white-space:pre-wrap;">'
+        f"{html.escape(body)}</div>"
+        if body
+        else ""
+    )
+    quoted_html = (
+        '<div style="margin-top:16px;border-top:1px solid #999;padding-top:8px;'
+        'font-family:Arial,sans-serif;font-size:12px;color:#000;">'
+        f"{html_headers}{html_body}</div>"
+    )
+    return plain, quoted_html
 
 
 def _deduplicated_addresses(values: list[str], excluded: set[str]) -> tuple[str, ...]:
@@ -245,12 +516,13 @@ class TranMailDraftBuilder:
             message["In-Reply-To"] = message_id
             references = _mail_text(original.get("References"))
             message["References"] = f"{references} {message_id}".strip()
-        message.set_content(intro)
+        quoted_plain, quoted_html = _quoted_source(original)
+        message.set_content(intro + quoted_plain)
         html_table = build_tran_mail_table(resolutions)
         html_intro = html.escape(intro).replace("\n", "<br>")
         message.add_alternative(
-            '<div style="font-family:Arial;font-size:10pt;">'
-            f"<p>{html_intro}</p>{html_table}</div>",
+            '<div style="font-family:Arial,sans-serif;font-size:13px;color:#000;">'
+            f"{html_intro}<br><br>{html_table}<br></div>{quoted_html}",
             subtype="html",
         )
         subtype = (
