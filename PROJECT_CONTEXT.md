@@ -48,14 +48,14 @@ Snapshot này được lập ngày **2026-08-15**:
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
 | Branch tích hợp | `agent/react-trannnb-team-dev` |
 | Commit feature template/Draft Mail | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
-| Commit đã CI và đang live trên Render | `728734e285ea93a11431918030be36f2bcf14145` |
+| Commit đã CI và đang live trên Render | `cfa1dd05bf9209939b3dddda5e04efe5e4859253` |
 | `main` tại snapshot | `58794f42955ceb396a254dedac60ceeda3ac1ce1` |
 | PR feature | [PR #5](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/5), đã merge |
 | Draft PR tài liệu hậu deploy | [PR #6](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/6) |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Render deploy quan sát gần nhất | Manual Deploy `728734e`, trạng thái **live** lúc 2026-08-15 15:38 GMT+7 |
+| Render deploy quan sát gần nhất | Environment rebuild `cfa1dd0`, trạng thái **live** lúc 2026-08-15 16:00 GMT+7 |
 | Health | `/api/health` trả `200`; `/` không có auth trả `401` |
 | CI | Hai check `quality` của PR #5 trên exact commit đều `SUCCESS` |
 | CI Linux exact commit | 251 test pass, 85% statement coverage |
@@ -934,6 +934,19 @@ Tran reference được tải thành công từ một phiên đã xác thực; a
 thuộc checklist operator ở trên. Mọi lần Manual Deploy/redeploy sau vẫn có thể
 xóa toàn bộ dữ liệu `/tmp/asset-hub-staging`, nên phải lấy xác nhận mới của user
 ngay trước thao tác.
+
+Cũng trong ngày 2026-08-15, user yêu cầu bật Draft Mail sau khi UI báo capability
+chưa sẵn sàng. Đối chiếu Render Environment xác nhận service hiện hữu thiếu
+`ASSET_HUB_DRAFT_FROM_ADDRESS` dù biến đã được khai báo trong
+`render.staging.yaml`; Manual Deploy code trước đó không đồng bộ lại Blueprint
+environment. Biến được thêm với giá trị staging `operator@example.invalid` và
+Render chạy **Save, rebuild, and deploy** tại commit
+`cfa1dd05bf9209939b3dddda5e04efe5e4859253`. Deployment chuyển live lúc 16:00
+GMT+7, health trả 200 liên tục, auth boundary vẫn 401 khi không credential và
+không thấy traceback/exception/5xx trong log hậu deploy. Runtime hiện có đủ ba
+điều kiện capability Draft: EML retention đã cấu hình, bundled Tran workbook
+template và draft sender. Do rebuild dùng `/tmp`, operator phải reload dashboard
+và nạp lại EML/reference test trước khi tạo draft.
 
 ### 14.3 GreenNode
 
