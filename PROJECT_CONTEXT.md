@@ -1449,8 +1449,15 @@ Synthetic 600-row CCDC hotspot benchmark trên máy dev: 20.417 s → 0.073 s
 
 **Outlook companion release-candidate evidence (local, 15/08/2026):**
 
-- branch `feat/outlook-addin-local-bridge`; chưa deploy Render, nên tính năng
-  companion **not live** tại snapshot này;
+- branch `feat/outlook-addin-local-bridge`, implementation commit
+  `c7f1072cd714272264d58f3f79bafc06df1eca22`; Draft PR
+  [#7](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/7)
+  target `main` và chưa merge;
+- GitHub CI cho implementation commit pass ở cả push run
+  [31884459840](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/actions/runs/31884459840)
+  và PR run
+  [31884479473](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/actions/runs/31884479473);
+- chưa deploy Render, nên tính năng companion **not live** tại snapshot này;
 - focused companion/Add-in/Bridge gate: 40 passed;
 - full pytest: 368 collected = 366 passed + 2 expected platform skips;
 - Ruff toàn repo và `git diff --check` pass (chỉ có cảnh báo LF→CRLF của Git);
@@ -1470,8 +1477,10 @@ Synthetic 600-row CCDC hotspot benchmark trên máy dev: 20.417 s → 0.073 s
   fresh `C:\\t\\f815b` pass như số liệu trên. Đây là bằng chứng minh bạch về
   flake môi trường, không bị ghi đè thành code pass giả.
 
-PR/CI GitHub phải được cập nhật ở phần release status sau khi publish. Không ghi
-“live” cho đến khi có fresh staging data-loss approval và verified deploy.
+Không ghi “live” cho đến khi có fresh staging data-loss approval và verified
+deploy. Commit tài liệu bàn giao có thể nằm sau implementation commit nêu trên;
+luôn dùng `git rev-parse HEAD` và trạng thái PR/CI hiện tại thay vì giả định SHA
+trong tài liệu là HEAD bất biến.
 
 ### 15.4 Khoảng trống automation hiện tại
 
