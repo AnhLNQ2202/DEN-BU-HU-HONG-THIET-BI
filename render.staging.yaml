@@ -24,6 +24,16 @@ services:
         value: "true"
       - key: ASSET_HUB_DRAFT_FROM_ADDRESS
         value: operator@example.invalid
+      # Optional role-scoped Microsoft 365 connection. Set all three secret
+      # values in Render before enabling; otherwise the feature fails closed.
+      - key: ASSET_HUB_M365_TENANT_ID
+        sync: false
+      - key: ASSET_HUB_M365_CLIENT_ID
+        sync: false
+      - key: ASSET_HUB_M365_CLIENT_SECRET
+        sync: false
+      - key: ASSET_HUB_M365_REDIRECT_URI
+        value: https://asset-compensation-hub-staging.onrender.com/api/m365/callback
       - key: ASSET_HUB_SECRET_KEY
         generateValue: true
       - key: ASSET_HUB_ACCESS_USER

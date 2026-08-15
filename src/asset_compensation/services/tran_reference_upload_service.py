@@ -10,12 +10,13 @@ import shutil
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Generic, TypeVar
 from urllib.parse import urlsplit
 from uuid import uuid4
 from xml.parsers import expat
@@ -275,6 +276,27 @@ class TranReferenceSnapshot:
     status: dict[str, Any]
 
 
+_IndexT = TypeVar("_IndexT", FaGlWorkbookIndex, CcdcWorkbookIndex)
+_StatSignature = tuple[int, int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexCacheKey:
+    """Stable identity for one managed or externally configured workbook."""
+
+    managed: bool
+    path: Path
+    stat_signature: _StatSignature | None
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexCacheEntry(Generic[_IndexT]):
+    """One bounded, fully validated in-memory workbook index."""
+
+    key: _IndexCacheKey
+    index: _IndexT
+
+
 class TranReferenceUploadService:
     """Validate uploads fully before switching one atomic version pointer.
 
@@ -288,6 +310,8 @@ class TranReferenceUploadService:
         self.versions_dir = self.reference_dir / "tran-versions"
         self.pointer_path = self.reference_dir / "tran-current.json"
         self._lock = RLock()
+        self._fa_gl_index_cache: _IndexCacheEntry[FaGlWorkbookIndex] | None = None
+        self._ccdc_index_cache: _IndexCacheEntry[CcdcWorkbookIndex] | None = None
         self.versions_dir.mkdir(parents=True, exist_ok=True)
         _private_mode(self.reference_dir, 0o700)
         _private_mode(self.versions_dir, 0o700)
@@ -317,13 +341,14 @@ class TranReferenceUploadService:
             try:
                 fa_path = self._stage_upload(staging, "fa-gl", fa_gl)
                 try:
-                    FaGlWorkbookIndex.from_path(fa_path)
+                    fa_gl_index = FaGlWorkbookIndex.from_path(fa_path)
                 except (OSError, TranReferenceError, ValueError) as exc:
                     raise TranReferenceUploadError(
                         "The FA&GL workbook does not match the required four-sheet contract"
                     ) from exc
 
                 ccdc_path: Path | None = None
+                ccdc_index: CcdcWorkbookIndex | None = None
                 if ccdc is not None:
                     ccdc_path = self._stage_upload(staging, "ccdc", ccdc)
                 elif not clear_ccdc and previous.ccdc_path is not None:
@@ -332,7 +357,7 @@ class TranReferenceUploadService:
                     _private_mode(ccdc_path, 0o600)
                 if ccdc_path is not None:
                     try:
-                        CcdcWorkbookIndex.from_path(ccdc_path)
+                        ccdc_index = CcdcWorkbookIndex.from_path(ccdc_path)
                     except (OSError, TranReferenceError, ValueError) as exc:
                         raise TranReferenceUploadError(
                             "The CCDC workbook does not match the optional lookup contract"
@@ -349,6 +374,7 @@ class TranReferenceUploadService:
                 os.replace(staging, final)
                 self._write_json(self.pointer_path, {"version": version})
                 self._prune_versions(version)
+                self._prime_managed_index_cache(final, fa_gl_index, ccdc_index)
                 return metadata
             except Exception:
                 if staging.exists():
@@ -381,6 +407,109 @@ class TranReferenceUploadService:
 
         return dict(self.snapshot().status)
 
+    def load_indices(
+        self,
+        fallback_fa_gl: str | Path | None = None,
+        fallback_ccdc: str | Path | None = None,
+    ) -> tuple[FaGlWorkbookIndex, CcdcWorkbookIndex | None]:
+        """Return one version-consistent, cached pair of read-only indexes.
+
+        App-managed workbooks are immutable after their atomic version switch,
+        so their unique final path is their cache identity. Externally configured
+        fallbacks can be replaced outside this service; those are keyed by both
+        their resolved path and a file-stat signature checked before and after
+        every cache fill or hit.
+        """
+
+        with self._lock:
+            managed = self.snapshot()
+            fa_gl_path = managed.fa_gl_path or self._optional_path(fallback_fa_gl)
+            ccdc_path = managed.ccdc_path or self._optional_path(fallback_ccdc)
+            if fa_gl_path is None:
+                raise TranReferenceUploadError("FA&GL reference is not configured")
+
+            fa_gl_managed = managed.fa_gl_path is not None
+            ccdc_managed = managed.ccdc_path is not None
+            try:
+                fa_gl_key = self._index_cache_key(
+                    fa_gl_path,
+                    managed=fa_gl_managed,
+                )
+            except OSError as exc:
+                raise TranReferenceUploadError(
+                    "FA&GL reference is unavailable or invalid"
+                ) from exc
+            if ccdc_path is None:
+                ccdc_key = None
+            else:
+                try:
+                    ccdc_key = self._index_cache_key(
+                        ccdc_path,
+                        managed=ccdc_managed,
+                    )
+                except OSError as exc:
+                    raise TranReferenceUploadError(
+                        "CCDC reference is unavailable or invalid"
+                    ) from exc
+
+            try:
+                fa_gl_index, fa_gl_cache = self._load_cached_index(
+                    key=fa_gl_key,
+                    cached=self._fa_gl_index_cache,
+                    loader=FaGlWorkbookIndex.from_path,
+                )
+            except TranReferenceUploadError:
+                raise
+            except (OSError, TranReferenceError, ValueError) as exc:
+                raise TranReferenceUploadError(
+                    "FA&GL reference is unavailable or invalid"
+                ) from exc
+            if ccdc_path is None:
+                ccdc_index = None
+                ccdc_cache = None
+            else:
+                try:
+                    assert ccdc_key is not None
+                    ccdc_index, ccdc_cache = self._load_cached_index(
+                        key=ccdc_key,
+                        cached=self._ccdc_index_cache,
+                        loader=CcdcWorkbookIndex.from_path,
+                    )
+                except TranReferenceUploadError:
+                    raise
+                except (OSError, TranReferenceError, ValueError) as exc:
+                    raise TranReferenceUploadError(
+                        "CCDC reference is unavailable or invalid"
+                    ) from exc
+
+            # Externally configured files can be replaced outside this service.
+            # Revalidate the *pair* after both loads so one request can never
+            # combine an old FA&GL index with a newer CCDC index (or vice versa).
+            try:
+                fa_gl_changed = not fa_gl_managed and (
+                    self._index_cache_key(fa_gl_path, managed=False) != fa_gl_key
+                )
+                ccdc_changed = (
+                    ccdc_path is not None
+                    and not ccdc_managed
+                    and self._index_cache_key(ccdc_path, managed=False) != ccdc_key
+                )
+            except OSError as exc:
+                raise TranReferenceUploadError(
+                    "External TranNNB reference changed while its index was being loaded"
+                ) from exc
+            if fa_gl_changed or ccdc_changed:
+                raise TranReferenceUploadError(
+                    "External TranNNB reference changed while its index was being loaded"
+                )
+
+            # Publish only after the full pair loaded successfully. A failed
+            # external refresh therefore leaves the previous bounded entries
+            # intact instead of exposing a mixed reference generation.
+            self._fa_gl_index_cache = fa_gl_cache
+            self._ccdc_index_cache = ccdc_cache
+            return fa_gl_index, ccdc_index
+
     def clear(self) -> dict[str, int]:
         """Deactivate and delete only app-managed Tran reference versions."""
 
@@ -408,6 +537,8 @@ class TranReferenceUploadService:
                     raise TranReferenceUploadError("Tran reference storage is unsafe")
 
             self.pointer_path.unlink(missing_ok=True)
+            self._fa_gl_index_cache = None
+            self._ccdc_index_cache = None
             for candidate, is_link in removable:
                 if is_link:
                     candidate.unlink(missing_ok=True)
@@ -426,6 +557,69 @@ class TranReferenceUploadService:
                     bool(status.get("ccdc_configured"))
                 ),
             }
+
+    @staticmethod
+    def _optional_path(value: str | Path | None) -> Path | None:
+        if value is None:
+            return None
+        return Path(value).expanduser()
+
+    @staticmethod
+    def _index_cache_key(path: str | Path, *, managed: bool) -> _IndexCacheKey:
+        resolved = Path(path).expanduser().resolve()
+        if managed:
+            return _IndexCacheKey(managed=True, path=resolved, stat_signature=None)
+        stat_result = resolved.stat()
+        signature: _StatSignature = (
+            stat_result.st_dev,
+            stat_result.st_ino,
+            stat_result.st_size,
+            stat_result.st_mtime_ns,
+            stat_result.st_ctime_ns,
+        )
+        return _IndexCacheKey(
+            managed=False,
+            path=resolved,
+            stat_signature=signature,
+        )
+
+    def _load_cached_index(
+        self,
+        *,
+        key: _IndexCacheKey,
+        cached: _IndexCacheEntry[_IndexT] | None,
+        loader: Callable[[str | Path], _IndexT],
+    ) -> tuple[_IndexT, _IndexCacheEntry[_IndexT]]:
+        if cached is not None and cached.key == key:
+            return cached.index, cached
+
+        index = loader(key.path)
+        entry = _IndexCacheEntry(key=key, index=index)
+        return index, entry
+
+    def _prime_managed_index_cache(
+        self,
+        version_dir: Path,
+        fa_gl_index: FaGlWorkbookIndex,
+        ccdc_index: CcdcWorkbookIndex | None,
+    ) -> None:
+        """Publish the exact indexes used to validate a successful upload."""
+
+        fa_gl_path = (version_dir / "fa-gl.xlsx").resolve()
+        fa_gl_index.source_path = fa_gl_path
+        self._fa_gl_index_cache = _IndexCacheEntry(
+            key=self._index_cache_key(fa_gl_path, managed=True),
+            index=fa_gl_index,
+        )
+        if ccdc_index is None:
+            self._ccdc_index_cache = None
+            return
+        ccdc_path = (version_dir / "ccdc.xlsx").resolve()
+        ccdc_index.source_path = ccdc_path
+        self._ccdc_index_cache = _IndexCacheEntry(
+            key=self._index_cache_key(ccdc_path, managed=True),
+            index=ccdc_index,
+        )
 
     def _stage_upload(
         self,

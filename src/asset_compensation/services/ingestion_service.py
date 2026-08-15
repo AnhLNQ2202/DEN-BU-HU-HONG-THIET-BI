@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from asset_compensation.domain import Case, ValidationError
+from asset_compensation.domain import Case, CaseStatus, ValidationError
 from asset_compensation.domain import ParsedCase as DomainParsedCase
 from asset_compensation.parsers import (
     EmlParseError,
@@ -222,6 +222,9 @@ def ingest_eml_payloads(
     unknown: list[str] = []
     skipped: list[str] = []
     known_content: dict[str, str] = {}
+    known_fallbacks: dict[tuple[str, str], datetime] = {}
+    known_cases: dict[tuple[str, str], list[Case]] = {}
+    reused_cases: list[Case] = []
     for case in service.list_cases():
         message_id_hash = str(case.metadata.get("message_id_sha256") or "")
         if not message_id_hash and case.metadata.get("message_id"):
@@ -232,6 +235,11 @@ def ingest_eml_payloads(
         content_sha = str(case.metadata.get("content_sha256") or "")
         if message_id_hash and content_sha:
             known_content[message_id_hash] = content_sha
+            identity = (message_id_hash, content_sha)
+            existing = known_fallbacks.get(identity)
+            if existing is None or case.received_at < existing:
+                known_fallbacks[identity] = case.received_at
+            known_cases.setdefault(identity, []).append(case)
     for payload in payloads:
         try:
             parsed_cases = parser.parse_bytes_many(
@@ -267,6 +275,22 @@ def ingest_eml_payloads(
                     "manual review required"
                 )
                 continue
+            identity = (message_id_hash, content_sha)
+            identity_cases = known_cases.get(identity, [])
+            if any(
+                case.status in {CaseStatus.ACCOUNTED, CaseStatus.CLOSED}
+                for case in identity_cases
+            ):
+                # A transport filename and retained-artifact display name are
+                # not part of the business identity. Once any case from this
+                # MIME is financially frozen, treat the whole exact message as
+                # a no-op so a multi-case replay cannot poison the Graph cursor.
+                reused_cases.extend(identity_cases)
+                continue
+            # A missing/invalid Date header originally falls back to ingestion
+            # time. Reuse the first stored fallback for exact content so a retry
+            # after a month boundary keeps the same human-readable case prefix.
+            payload_fallback = known_fallbacks.get(identity, fallback)
             payload_candidates: list[DomainParsedCase] = []
             for parsed in parsed_cases:
                 safe_metadata = {
@@ -287,7 +311,7 @@ def ingest_eml_payloads(
                     _to_domain_case(
                         safe_parsed,
                         payload.filename,
-                        fallback,
+                        payload_fallback,
                         supplier_directory,
                         ambiguous_supplier_domains,
                     )
@@ -295,6 +319,7 @@ def ingest_eml_payloads(
             candidates.extend(payload_candidates)
             if message_id:
                 known_content[message_id_hash] = content_sha
+                known_fallbacks.setdefault(identity, payload_fallback)
         except EmlSkipError as exc:
             skipped.append(payload.filename)
             warnings.append(f"{payload.filename}: skipped ({exc.reason})")
@@ -304,7 +329,11 @@ def ingest_eml_payloads(
                 f"{payload.filename}: email could not be classified or is missing required fields"
             )
 
-    persisted = service.ingest(candidates)
+    newly_persisted = service.ingest(candidates)
+    persisted_by_id = {
+        case.id: case for case in (*reused_cases, *newly_persisted)
+    }
+    persisted = list(persisted_by_id.values())
     warnings.extend(
         f"{case.id}: {warning}" for case in persisted for warning in case.warnings
     )

@@ -1082,6 +1082,122 @@ label.small {
   font-size: 13px;
 }
 
+.m365-panel {
+  display: grid;
+  gap: 11px;
+}
+
+.m365-panel .pdf-panel-heading {
+  align-items: flex-start;
+}
+
+.m365-panel .pdf-panel-heading > div {
+  min-width: 0;
+}
+
+.m365-subtitle {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.m365-account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.m365-account-row > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.m365-account-row > div:first-child span,
+.m365-account-row > div:first-child small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m365-account-row > div:first-child strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.m365-folder-controls {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  align-items: end;
+  gap: 10px 14px;
+}
+
+.m365-folder-controls > label {
+  display: grid;
+  gap: 5px;
+}
+
+.m365-folder-controls > label > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.m365-folder-controls select {
+  width: 100%;
+}
+
+.m365-selected-folder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.m365-selected-folder strong {
+  color: var(--text);
+}
+
+.m365-selected-folder small {
+  flex-basis: 100%;
+  font-size: 11px;
+}
+
+.m365-auto-sync {
+  margin: 0;
+}
+
+.m365-safety-note {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--vng-yellow);
+  border-radius: 6px;
+  background: var(--vng-yellow-tint);
+  color: #6f5310;
+  font-size: 11.5px;
+}
+
+.m365-sync-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.m365-more-warning {
+  color: #6f5310;
+  font-weight: 700;
+}
+
 .pdf-capability-badge.is-disabled {
   background: var(--surface-alt);
   color: var(--muted);
@@ -2058,11 +2174,22 @@ label.small {
   }
 
   .supplier-file-grid,
+  .m365-folder-controls,
   .tran-reference-grid,
   .tran-reference-form,
   .upload-summary,
   .upload-summary--email {
     grid-template-columns: 1fr;
+  }
+
+  .m365-account-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .m365-account-row .upload-actions .btn,
+  .m365-folder-controls .upload-actions .btn {
+    flex: 1 1 180px;
   }
 
   .upload-actions .btn,

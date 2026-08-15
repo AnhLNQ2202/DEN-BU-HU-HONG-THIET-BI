@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import date, datetime
 from functools import wraps
@@ -11,13 +11,19 @@ from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 from uuid import uuid4
 
-from flask import Blueprint, current_app, jsonify, render_template, request, send_file
+from flask import (
+    Blueprint,
+    current_app,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+)
 
 from asset_compensation.adapters import (
     AccountingExportError,
     AccountingTemplateAdapter,
-    CcdcWorkbookIndex,
-    FaGlWorkbookIndex,
     GlAccountPair,
     OutputExistsError,
     PdfAdapterError,
@@ -26,19 +32,25 @@ from asset_compensation.adapters import (
     PdfPageOverflowError,
     TranMailDraftBuilder,
     TranMailError,
-    TranReferenceError,
     TranWorkbookAdapter,
     TranWorkbookError,
     build_tran_mail_table,
 )
 from asset_compensation.demo import seed_demo
-from asset_compensation.domain import Case, CaseStatus, CaseType, ValidationError
+from asset_compensation.domain import (
+    Case,
+    CaseNotFoundError,
+    CaseStatus,
+    CaseType,
+    ValidationError,
+)
 from asset_compensation.parsers import (
     SupplierLoadError,
     load_supplier_directory,
     normalize_domain,
 )
 from asset_compensation.services import (
+    M365_SESSION_COOKIE,
     MailArtifactError,
     TranAssetRequest,
     safe_eml_basename,
@@ -52,6 +64,7 @@ blueprint = Blueprint("asset_hub", __name__)
 _BATCH_NAME_RE = re.compile(r"GN2\d{6}")
 _OPAQUE_ID_RE = re.compile(r"[0-9a-f]{32}")
 _ARTIFACT_HANDLE_RE = re.compile(r"eml-sha256-[0-9a-f]{64}")
+_MAX_JSON_BODY_BYTES = 1024 * 1024
 _TRAN_REQUEST_FIELDS = frozenset(
     {
         "tag_number",
@@ -83,6 +96,23 @@ def _extension(name: str) -> Any:
     return current_app.extensions["asset_hub"][name]
 
 
+def _m365_session_id() -> str | None:
+    return request.cookies.get(M365_SESSION_COOKIE)
+
+
+def _set_m365_session_cookie(response: Any, session_id: str) -> None:
+    connection_service = _extension("m365_connection_service")
+    response.set_cookie(
+        M365_SESSION_COOKIE,
+        session_id,
+        max_age=8 * 60 * 60,
+        secure=connection_service.secure_cookie,
+        httponly=True,
+        samesite="Lax",
+        path="/",
+    )
+
+
 def _serialized_mutation(handler: Callable[_P, _R]) -> Callable[_P, _R]:
     """Serialize state-changing routes against staging cleanup in this process."""
 
@@ -103,9 +133,7 @@ def _current_supplier_reference(settings: Any) -> tuple[Any, frozenset[str]]:
     upload_service = _extension("supplier_upload_service")
     directory, raw_ambiguous, status = upload_service.snapshot()
     if status["configured"]:
-        ambiguous = frozenset(
-            normalize_domain(domain) for domain in raw_ambiguous if domain
-        )
+        ambiguous = frozenset(normalize_domain(domain) for domain in raw_ambiguous if domain)
         return directory, ambiguous
     if settings.supplier_file is not None:
         return load_supplier_directory(settings.supplier_file), frozenset()
@@ -113,6 +141,9 @@ def _current_supplier_reference(settings: Any) -> tuple[Any, frozenset[str]]:
 
 
 def _json_body() -> dict[str, Any]:
+    content_length = request.content_length
+    if content_length is None or content_length > _MAX_JSON_BODY_BYTES:
+        raise ValidationError("JSON request exceeds the 1 MiB safety limit")
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         raise ValidationError("A JSON object is required")
@@ -193,8 +224,7 @@ def _tran_requests(data: dict[str, Any], *, maximum: int = 100) -> list[TranAsse
         unknown = set(item) - _TRAN_REQUEST_FIELDS
         if unknown:
             raise ValidationError(
-                f"assets item {index} has unsupported fields: "
-                + ", ".join(sorted(unknown))
+                f"assets item {index} has unsupported fields: " + ", ".join(sorted(unknown))
             )
         try:
             requests.append(
@@ -208,9 +238,7 @@ def _tran_requests(data: dict[str, Any], *, maximum: int = 100) -> list[TranAsse
                     confirmed_start_date=item.get("confirmed_start_date"),
                     confirmed_group=item.get("confirmed_group"),
                     confirmed_fee_rate=item.get("confirmed_fee_rate"),
-                    classification_confirmed=item.get(
-                        "classification_confirmed", False
-                    ),
+                    classification_confirmed=item.get("classification_confirmed", False),
                 )
             )
         except ValidationError as exc:
@@ -226,9 +254,7 @@ def _tran_reference_status(settings: Any) -> dict[str, Any]:
         "fa_gl": {
             "configured": fa_path is not None,
             "available": bool(
-                fa_path
-                and fa_path.is_file()
-                and fa_path.suffix.casefold() in {".xlsx", ".xlsm"}
+                fa_path and fa_path.is_file() and fa_path.suffix.casefold() in {".xlsx", ".xlsm"}
             ),
             "source": (
                 "uploaded"
@@ -257,22 +283,11 @@ def _tran_reference_status(settings: Any) -> dict[str, Any]:
     }
 
 
-def _load_tran_references(settings: Any) -> tuple[FaGlWorkbookIndex, CcdcWorkbookIndex | None]:
-    managed = _extension("tran_reference_upload_service").snapshot()
-    fa_path = managed.fa_gl_path or settings.fa_gl_reference
-    ccdc_path = managed.ccdc_path or settings.ccdc_reference
-    if fa_path is None:
-        raise ValidationError("FA&GL reference is not configured")
-    try:
-        fa_gl = FaGlWorkbookIndex.from_path(fa_path)
-    except (OSError, TranReferenceError, ValueError) as exc:
-        raise ValidationError("FA&GL reference is unavailable or invalid") from exc
-    if ccdc_path is None:
-        return fa_gl, None
-    try:
-        return fa_gl, CcdcWorkbookIndex.from_path(ccdc_path)
-    except (OSError, TranReferenceError, ValueError) as exc:
-        raise ValidationError("CCDC reference is unavailable or invalid") from exc
+def _load_tran_references(settings: Any) -> tuple[Any, Any | None]:
+    return _extension("tran_reference_upload_service").load_indices(
+        settings.fa_gl_reference,
+        settings.ccdc_reference,
+    )
 
 
 def _resolve_tran(data: dict[str, Any], *, maximum: int = 100) -> tuple[Any, ...]:
@@ -306,11 +321,7 @@ def _opaque_id(value: object, field_name: str) -> str:
 def _managed_output(path: Path, root: Path) -> Path:
     resolved_root = root.resolve()
     resolved = path.resolve()
-    if (
-        resolved.parent != resolved_root
-        or path.is_symlink()
-        or not resolved.is_file()
-    ):
+    if resolved.parent != resolved_root or path.is_symlink() or not resolved.is_file():
         raise ValidationError("Generated output is unavailable")
     return resolved
 
@@ -341,13 +352,12 @@ def _capabilities(settings: Any) -> dict[str, Any]:
     reference_status = _tran_reference_status(settings)
     template = settings.effective_tran_template
     template_available = bool(
-        template
-        and template.is_file()
-        and template.suffix.casefold() in {".xlsx", ".xlsm"}
+        template and template.is_file() and template.suffix.casefold() in {".xlsx", ".xlsm"}
     )
     retention = bool(settings.retain_raw_eml)
     mail_pdf = bool(_extension("mail_pdf_available"))
     pypdf = bool(_extension("pypdf_available"))
+    m365_configured = bool(_extension("m365_connection_service").configured)
     return {
         "test_reset": settings.allow_test_reset,
         "demo_reset": settings.demo_mode,
@@ -356,20 +366,26 @@ def _capabilities(settings: Any) -> dict[str, Any]:
         "tran_reference_upload": True,
         "tran_lookup": reference_status["fa_gl"]["available"],
         "tran_workbook_export": template_available,
-        "tran_draft": bool(
-            retention and template_available and settings.draft_from_address
-        ),
+        "tran_draft": bool(retention and template_available and settings.draft_from_address),
         "mail_pdf_individual": mail_pdf,
         "mail_pdf_batch": bool(mail_pdf and pypdf),
         "mail_pdf_backend": _extension("pdf_backend") if mail_pdf else None,
+        "m365_configured": m365_configured,
+        "m365_ngan": m365_configured,
+        "m365_tran": m365_configured,
+        "tran_outlook_draft": bool(m365_configured and retention and template_available),
     }
 
 
 def _case_issue(case: Case, index: int, warning: str) -> dict[str, Any]:
     lowered = warning.casefold()
-    severity = "high" if any(
-        token in lowered for token in ("mismatch", "missing", "multiple", "duplicate", "lệch")
-    ) else "medium"
+    severity = (
+        "high"
+        if any(
+            token in lowered for token in ("mismatch", "missing", "multiple", "duplicate", "lệch")
+        )
+        else "medium"
+    )
     return {
         "id": f"{case.id}:{index}",
         "case_id": case.id,
@@ -397,6 +413,87 @@ def _case_dict(case: Case) -> dict[str, Any]:
                 "download_url": f"/api/mail-artifacts/{handle}/download",
             }
     return payload
+
+
+def _require_tran_source_binding(
+    data: dict[str, Any], handle: str, service: Any
+) -> None:
+    """Bind each requested asset to one immutable LOST source row."""
+
+    bindings = data.get("source_bindings")
+    assets = data.get("assets")
+    if (
+        not isinstance(assets, list)
+        or not isinstance(bindings, list)
+        or not 1 <= len(bindings) <= 100
+        or len(bindings) != len(assets)
+    ):
+        raise ValidationError(
+            "source_bindings must identify each selected TranNNB asset"
+        )
+    normalized: list[tuple[str, int | None]] = []
+    for binding in bindings:
+        if not isinstance(binding, dict) or set(binding) != {
+            "case_id",
+            "source_row_index",
+        }:
+            raise ValidationError("Each source binding must contain case_id and row index")
+        case_id = binding.get("case_id")
+        row_index = binding.get("source_row_index")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValidationError("Source binding case_id is invalid")
+        if row_index is not None and (
+            isinstance(row_index, bool) or not isinstance(row_index, int) or row_index < 0
+        ):
+            raise ValidationError("Source binding row index is invalid")
+        normalized.append((case_id.strip(), row_index))
+    if len(set(normalized)) != len(normalized):
+        raise ValidationError("source_bindings cannot contain duplicate source rows")
+
+    normalized_ids = tuple(dict.fromkeys(case_id for case_id, _ in normalized))
+    try:
+        selected = {case_id: service.get_case(case_id) for case_id in normalized_ids}
+    except CaseNotFoundError as exc:
+        raise ValidationError(
+            "Selected cases do not match the retained source email"
+        ) from exc
+
+    for asset, (case_id, row_index) in zip(assets, normalized, strict=True):
+        case = selected[case_id]
+        if (
+            not isinstance(asset, Mapping)
+            or case.case_type is not CaseType.LOST
+            or case.status in {CaseStatus.ACCOUNTED, CaseStatus.CLOSED}
+            or case.metadata.get("mail_artifact_handle") != handle
+        ):
+            raise ValidationError("Selected cases do not match the retained source email")
+        rows = case.metadata.get("asset_rows")
+        if isinstance(rows, list) and rows:
+            if row_index is None or row_index >= len(rows):
+                raise ValidationError("Selected source row is unavailable")
+            source = rows[row_index]
+            if not isinstance(source, Mapping):
+                raise ValidationError("Selected source row is unavailable")
+            source_tag = source.get("asset_code")
+            source_domain = source.get("domain")
+        else:
+            if row_index is not None:
+                raise ValidationError("Selected source row is unavailable")
+            source_tag = case.asset_code
+            source_domain = case.domain
+        requested_tag = str(asset.get("tag_number") or "").strip().casefold()
+        expected_tag = str(source_tag or "").strip().casefold()
+        requested_domain = normalize_domain(asset.get("domain"))
+        expected_domain = normalize_domain(source_domain)
+        if (
+            not requested_tag
+            or requested_tag != expected_tag
+            or not requested_domain
+            or requested_domain != expected_domain
+        ):
+            raise ValidationError(
+                "Requested asset identity does not match its retained source row"
+            )
 
 
 def _batch_dict(batch: Any, service: Any, settings: Any) -> dict[str, Any]:
@@ -468,6 +565,135 @@ def capabilities() -> Any:
             "tran_references": _tran_reference_status(settings),
         }
     )
+
+
+@blueprint.get("/api/m365/<role>/status")
+def m365_status(role: str) -> Any:
+    status = _extension("m365_connection_service").status(_m365_session_id(), role)
+    return jsonify({"ok": True, **status})
+
+
+@blueprint.post("/api/m365/<role>/connect")
+@_serialized_mutation
+def m365_connect(role: str) -> Any:
+    data = _json_body()
+    _require_exact_keys(data, allowed={"return_to"})
+    started = _extension("m365_connection_service").start_authorization(
+        _m365_session_id(),
+        role,
+        return_to=data.get("return_to", "/"),
+    )
+    response = jsonify(
+        {
+            "ok": True,
+            "role": started.role,
+            "authorization_url": started.authorization_url,
+        }
+    )
+    _set_m365_session_cookie(response, started.session_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+@blueprint.get("/api/m365/callback")
+@_serialized_mutation
+def m365_callback() -> Any:
+    allowed = {
+        "client_info",
+        "code",
+        "error",
+        "error_description",
+        "error_subcode",
+        "session_state",
+        "state",
+    }
+    if not request.query_string or len(request.query_string) > 16_384:
+        raise ValidationError("OAuth callback query is invalid")
+    query_items = list(request.args.lists())
+    if not query_items or any(
+        key not in allowed
+        or len(values) != 1
+        or len(values[0]) > 8192
+        or any(ord(character) < 32 or ord(character) == 127 for character in values[0])
+        for key, values in query_items
+    ):
+        raise ValidationError("OAuth callback query is invalid")
+    callback_values = {key: values[0] for key, values in query_items}
+    result = _extension("m365_connection_service").complete_authorization(
+        _m365_session_id(),
+        callback_values,
+    )
+    response = redirect(result.return_to, code=303)
+    session_id = _m365_session_id()
+    if session_id:
+        _set_m365_session_cookie(response, session_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@blueprint.post("/api/m365/<role>/disconnect")
+@_serialized_mutation
+def m365_disconnect(role: str) -> Any:
+    if request.headers.get("X-Asset-Hub-Action") != "m365-disconnect-v1":
+        raise ValidationError("The required Microsoft 365 action header is invalid")
+    data = _json_body()
+    _require_exact_keys(data, allowed=set())
+    _extension("m365_connection_service").disconnect(_m365_session_id(), role)
+    return jsonify({"ok": True, "role": role.casefold(), "connected": False})
+
+
+@blueprint.get("/api/m365/<role>/folders")
+def m365_folders(role: str) -> Any:
+    folders = _extension("m365_connection_service").list_folders(_m365_session_id(), role)
+    return jsonify(
+        {
+            "ok": True,
+            "role": role.casefold(),
+            "folders": [folder.to_public_dict() for folder in folders],
+            "maximum_depth": 4,
+            "maximum_count": 200,
+        }
+    )
+
+
+@blueprint.post("/api/m365/<role>/folder")
+@_serialized_mutation
+def m365_select_folder(role: str) -> Any:
+    data = _json_body()
+    _require_exact_keys(data, allowed={"folder_id"}, required={"folder_id"})
+    selected = _extension("m365_connection_service").select_folder(
+        _m365_session_id(), role, data["folder_id"]
+    )
+    return jsonify(
+        {
+            "ok": True,
+            "role": role.casefold(),
+            "selected_folder": selected.to_dict(),
+            "cursor_ready": False,
+        }
+    )
+
+
+@blueprint.post("/api/m365/<role>/sync")
+@_serialized_mutation
+def m365_sync(role: str) -> Any:
+    if request.headers.get("X-Asset-Hub-Action") != "m365-sync-v1":
+        raise ValidationError("The required Microsoft 365 action header is invalid")
+    data = _json_body()
+    _require_exact_keys(data, allowed=set())
+    settings, _, _ = _dependencies()
+    try:
+        supplier_directory, ambiguous_domains = _current_supplier_reference(settings)
+    except (OSError, SupplierLoadError) as exc:
+        raise ValidationError("Could not load the configured supplier reference") from exc
+    result = _extension("m365_mail_sync_service").sync(
+        _m365_session_id(),
+        role,
+        supplier_directory=supplier_directory,
+        ambiguous_supplier_domains=ambiguous_domains,
+    )
+    return jsonify({"ok": True, **result.to_dict()})
 
 
 @blueprint.get("/api/cases")
@@ -656,6 +882,7 @@ def clear_test_data() -> Any:
     reference_counts = _extension("tran_reference_upload_service").clear()
     artifact_count = _extension("mail_artifact_store").clear_managed()
     managed_output_count = _clear_managed_tran_outputs(settings)
+    m365_session_count = _extension("m365_connection_service").clear_all_sessions()
     return jsonify(
         {
             "ok": True,
@@ -664,6 +891,7 @@ def clear_test_data() -> Any:
             **reference_counts,
             "mail_artifact_count": artifact_count,
             "tran_managed_output_count": managed_output_count,
+            "m365_session_count": m365_session_count,
         }
     )
 
@@ -757,9 +985,7 @@ def upload_emails() -> Any:
         try:
             supplier_directory, ambiguous_domains = _current_supplier_reference(settings)
         except (OSError, SupplierLoadError) as exc:
-            raise ValidationError(
-                "Could not load the configured supplier reference"
-            ) from exc
+            raise ValidationError("Could not load the configured supplier reference") from exc
         result = ingest_eml_payloads(
             service,
             payloads,
@@ -801,8 +1027,7 @@ def upload_emails() -> Any:
                         "handle": case.metadata["mail_artifact_handle"],
                         "filename": case.metadata["mail_artifact_filename"],
                         "download_url": (
-                            "/api/mail-artifacts/"
-                            f"{case.metadata['mail_artifact_handle']}/download"
+                            f"/api/mail-artifacts/{case.metadata['mail_artifact_handle']}/download"
                         ),
                     }
                 }
@@ -823,8 +1048,7 @@ def upload_emails() -> Any:
         {
             "ok": True,
             "message": (
-                f"Created {len(cases)} {case_label} from "
-                f"{len(payloads)} uploaded {email_label}"
+                f"Created {len(cases)} {case_label} from {len(payloads)} uploaded {email_label}"
             ),
             "received_count": len(payloads),
             "ingested": len(cases),
@@ -885,9 +1109,7 @@ def upload_tran_references() -> Any:
     fa_files = request.files.getlist("fa_gl_file")
     ccdc_files = request.files.getlist("ccdc_file")
     if len(fa_files) != 1 or len(ccdc_files) > 1:
-        raise ValidationError(
-            "Upload exactly one fa_gl_file and at most one ccdc_file"
-        )
+        raise ValidationError("Upload exactly one fa_gl_file and at most one ccdc_file")
     raw_clear = request.form.get("clear_ccdc")
     if raw_clear not in {None, "true"}:
         raise ValidationError("clear_ccdc must be omitted or exactly true")
@@ -939,9 +1161,7 @@ def resolve_tran_assets() -> Any:
             "ready": ready,
             "review_required": not ready,
             "results": [item.to_dict() for item in resolutions],
-            "mail_table_html": (
-                build_tran_mail_table(resolutions) if ready else None
-            ),
+            "mail_table_html": (build_tran_mail_table(resolutions) if ready else None),
         }
     )
 
@@ -949,9 +1169,9 @@ def resolve_tran_assets() -> Any:
 def _export_tran_workbook(data: dict[str, Any]) -> tuple[Any, Path, str]:
     settings, _, _ = _dependencies()
     resolutions = _resolve_tran(data)
-    processing_date = _optional_iso_date(
-        data.get("processing_date"), "processing_date"
-    ) or date.today()
+    processing_date = (
+        _optional_iso_date(data.get("processing_date"), "processing_date") or date.today()
+    )
     year_sheet = data.get("year_sheet")
     if year_sheet is not None:
         if (
@@ -1023,7 +1243,7 @@ def download_tran_workbook(output_id: str) -> Any:
 @blueprint.post("/api/tran/drafts")
 @_serialized_mutation
 def create_tran_draft() -> Any:
-    settings, _, _ = _dependencies()
+    settings, _, service = _dependencies()
     if not settings.retain_raw_eml:
         return _unavailable("Raw EML retention is disabled")
     if not settings.draft_from_address:
@@ -1033,16 +1253,18 @@ def create_tran_draft() -> Any:
         data,
         allowed={
             "assets",
+            "source_bindings",
             "mail_artifact_handle",
             "body_intro",
             "processing_date",
             "year_sheet",
         },
-        required={"assets", "mail_artifact_handle", "body_intro"},
+        required={"assets", "source_bindings", "mail_artifact_handle", "body_intro"},
     )
     handle = str(data.get("mail_artifact_handle") or "")
     if not _ARTIFACT_HANDLE_RE.fullmatch(handle):
         raise ValidationError("mail_artifact_handle is invalid")
+    _require_tran_source_binding(data, handle, service)
     body_intro = data.get("body_intro")
     if not isinstance(body_intro, str) or not body_intro.strip() or len(body_intro) > 10_000:
         raise ValidationError("body_intro must contain 1 to 10,000 characters")
@@ -1078,6 +1300,66 @@ def create_tran_draft() -> Any:
             "subject": draft.subject,
             "to_count": len(draft.to),
             "cc_count": len(draft.cc),
+            "sent": False,
+        }
+    ), 201
+
+
+@blueprint.post("/api/tran/outlook-drafts")
+@_serialized_mutation
+def create_tran_outlook_draft() -> Any:
+    settings, _, service = _dependencies()
+    if not _extension("m365_connection_service").configured:
+        return _unavailable("Microsoft 365 integration is not configured")
+    if not settings.retain_raw_eml:
+        return _unavailable("Raw EML retention is disabled")
+    data = _json_body()
+    _require_exact_keys(
+        data,
+        allowed={
+            "assets",
+            "source_bindings",
+            "mail_artifact_handle",
+            "body_intro",
+            "processing_date",
+            "year_sheet",
+        },
+        required={"assets", "source_bindings", "mail_artifact_handle", "body_intro"},
+    )
+    handle = str(data.get("mail_artifact_handle") or "")
+    if not _ARTIFACT_HANDLE_RE.fullmatch(handle):
+        raise ValidationError("mail_artifact_handle is invalid")
+    _require_tran_source_binding(data, handle, service)
+    body_intro = data.get("body_intro")
+    if not isinstance(body_intro, str) or not body_intro.strip() or len(body_intro) > 10_000:
+        raise ValidationError("body_intro must contain 1 to 10,000 characters")
+    try:
+        original = _extension("mail_artifact_store").read_bytes(handle)
+    except MailArtifactError as exc:
+        raise ValidationError("Retained source email is unavailable") from exc
+
+    workbook_path: Path | None = None
+    try:
+        resolutions, workbook_path, output_id = _export_tran_workbook(data)
+        outlook_draft = _extension("m365_outlook_draft_service").create(
+            _m365_session_id(),
+            original_eml=original,
+            resolutions=resolutions,
+            workbook_path=workbook_path,
+            body_intro=body_intro.strip(),
+        )
+    except Exception:
+        if workbook_path is not None:
+            workbook_path.unlink(missing_ok=True)
+        raise
+    return jsonify(
+        {
+            "ok": True,
+            "role": "tran",
+            "output_id": output_id,
+            "asset_count": len(resolutions),
+            "workbook_download_url": f"/api/tran/workbooks/{output_id}/download",
+            "outlook_draft": outlook_draft.to_dict(),
             "sent": False,
         }
     ), 201
@@ -1185,9 +1467,7 @@ def create_mail_pdf_batch() -> Any:
         or not _extension("mail_pdf_available")
         or not _extension("pypdf_available")
     ):
-        return _unavailable(
-            "Batch EML-to-PDF requires retention, a safe renderer, and pypdf"
-        )
+        return _unavailable("Batch EML-to-PDF requires retention, a safe renderer, and pypdf")
     data = _json_body()
     _require_exact_keys(
         data,
@@ -1200,17 +1480,14 @@ def create_mail_pdf_batch() -> Any:
         required={"mail_artifact_handles"},
     )
     raw_batch_name = data.get("batch_name")
-    output_batch_name = (
-        _batch_name(raw_batch_name) if raw_batch_name not in (None, "") else None
-    )
+    output_batch_name = _batch_name(raw_batch_name) if raw_batch_name not in (None, "") else None
     handles = data.get("mail_artifact_handles")
     if (
         not isinstance(handles, list)
         or not handles
         or len(handles) > 20
         or not all(
-            isinstance(item, str) and _ARTIFACT_HANDLE_RE.fullmatch(item)
-            for item in handles
+            isinstance(item, str) and _ARTIFACT_HANDLE_RE.fullmatch(item) for item in handles
         )
     ):
         raise ValidationError("mail_artifact_handles must contain 1 to 20 valid handles")
@@ -1245,9 +1522,7 @@ def create_mail_pdf_batch() -> Any:
             "ok": True,
             "batch_id": batch_id,
             "output_name": (
-                f"chungtu_{output_batch_name}.pdf"
-                if output_batch_name
-                else "chungtu_gop.pdf"
+                f"chungtu_{output_batch_name}.pdf" if output_batch_name else "chungtu_gop.pdf"
             ),
             "merged_download_url": (
                 f"/api/mail-pdfs/batches/{batch_id}/merged"
@@ -1261,9 +1536,7 @@ def create_mail_pdf_batch() -> Any:
                     "padded_pages": item.padded_pages,
                     "truncated_pages": item.truncated_pages,
                     "warnings": list(item.warnings),
-                    "download_url": (
-                        f"/api/mail-pdfs/batches/{batch_id}/items/{index}"
-                    ),
+                    "download_url": (f"/api/mail-pdfs/batches/{batch_id}/items/{index}"),
                 }
                 for index, item in enumerate(result.items, start=1)
             ],
@@ -1276,11 +1549,7 @@ def _mail_pdf_batch_directory(settings: Any, batch_id: str) -> Path:
     identifier = _opaque_id(batch_id, "batch_id")
     root = settings.mail_pdf_output_dir.resolve()
     candidate = settings.mail_pdf_output_dir / f"batch-{identifier}"
-    if (
-        candidate.is_symlink()
-        or not candidate.is_dir()
-        or candidate.resolve().parent != root
-    ):
+    if candidate.is_symlink() or not candidate.is_dir() or candidate.resolve().parent != root:
         raise ValidationError("Mail PDF batch is unavailable")
     return candidate.resolve()
 
@@ -1294,9 +1563,7 @@ def download_mail_pdf_batch(batch_id: str) -> Any:
         raise ValidationError("Merged mail PDF is unavailable")
     raw_batch_name = request.args.get("batch_name")
     download_name = (
-        f"chungtu_{_batch_name(raw_batch_name)}.pdf"
-        if raw_batch_name
-        else "chungtu_gop.pdf"
+        f"chungtu_{_batch_name(raw_batch_name)}.pdf" if raw_batch_name else "chungtu_gop.pdf"
     )
     return _private_download(
         merged,
@@ -1368,9 +1635,7 @@ def create_batch() -> Any:
         if tuple(case_ids) != existing.case_ids:
             raise ValidationError(f"Batch name {batch_name} is already in use")
         if int(existing.metadata.get("invoice_start", 1)) != invoice_start:
-            raise ValidationError(
-                f"Batch name {batch_name} already uses a different invoice_start"
-            )
+            raise ValidationError(f"Batch name {batch_name} already uses a different invoice_start")
         return jsonify(
             {
                 "ok": True,
@@ -1380,9 +1645,7 @@ def create_batch() -> Any:
         )
 
     cases = [service.get_case(case_id) for case_id in case_ids]
-    not_ready = [
-        case.id for case in cases if case.status is not CaseStatus.READY_FOR_ACCOUNTING
-    ]
+    not_ready = [case.id for case in cases if case.status is not CaseStatus.READY_FOR_ACCOUNTING]
     if not_ready:
         raise ValidationError(
             "Only READY_FOR_ACCOUNTING cases can enter a batch: " + ", ".join(not_ready)
@@ -1409,10 +1672,7 @@ def create_batch() -> Any:
             invoice_start=invoice_start,
             org_id=settings.accounting_org_id,
         )
-        output_name = (
-            f"hachtoan_gop_{batch_date:%m.%Y}_{batch_name}"
-            f"{exporter.output_suffix}"
-        )
+        output_name = f"hachtoan_gop_{batch_date:%m.%Y}_{batch_name}{exporter.output_suffix}"
         output_path = settings.output_dir / output_name
         export_result = exporter.export(
             resolved_cases,
@@ -1462,9 +1722,10 @@ def download_batch(batch_id: str) -> Any:
     if batch is None:
         raise ValidationError("Batch was not found")
     output_name = batch.metadata.get("output_name")
-    if not isinstance(output_name, str) or output_name != output_name.replace("\\", "/").rsplit(
-        "/", 1
-    )[-1]:
+    if (
+        not isinstance(output_name, str)
+        or output_name != output_name.replace("\\", "/").rsplit("/", 1)[-1]
+    ):
         raise ValidationError("Batch output is not available")
     output_path = settings.output_dir / output_name
     resolved = output_path.resolve()

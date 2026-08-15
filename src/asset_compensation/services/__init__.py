@@ -24,6 +24,22 @@ from .compensation_service import (
     rounded_usage_months,
 )
 from .email_upload_service import EmailUpload, EmailUploadError, EmailUploadService
+from .m365_auth_service import (
+    M365_SESSION_COOKIE,
+    M365ConnectionService,
+    M365OAuthConfig,
+    M365OAuthStateError,
+    M365ProviderError,
+    M365ReconnectRequired,
+    M365ServiceError,
+    M365UnavailableError,
+)
+from .m365_mail_service import (
+    M365MailSyncService,
+    M365OutlookDraftResult,
+    M365OutlookDraftService,
+    M365SyncResult,
+)
 from .mail_artifact_service import (
     MailArtifactDisabledError,
     MailArtifactError,
@@ -72,6 +88,18 @@ __all__ = [
     "MailPdfBatchResult",
     "MailPdfItemResult",
     "MailPdfService",
+    "M365ConnectionService",
+    "M365_SESSION_COOKIE",
+    "M365MailSyncService",
+    "M365OAuthConfig",
+    "M365OAuthStateError",
+    "M365OutlookDraftResult",
+    "M365OutlookDraftService",
+    "M365ProviderError",
+    "M365ReconnectRequired",
+    "M365ServiceError",
+    "M365SyncResult",
+    "M365UnavailableError",
     "SupplierCollision",
     "SupplierUpload",
     "SupplierUploadError",

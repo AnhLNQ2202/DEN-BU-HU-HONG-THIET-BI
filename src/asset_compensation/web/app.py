@@ -35,6 +35,15 @@ from asset_compensation.services import (
     AccountingPolicyResolver,
     CaseService,
     CompensationService,
+    M365ConnectionService,
+    M365MailSyncService,
+    M365OAuthConfig,
+    M365OAuthStateError,
+    M365OutlookDraftService,
+    M365ProviderError,
+    M365ReconnectRequired,
+    M365ServiceError,
+    M365UnavailableError,
     MailArtifactStore,
     MailPdfService,
     TestDataService,
@@ -74,6 +83,15 @@ def create_app(settings: Settings | None = None) -> Flask:
         settings.mail_artifact_dir,
         enabled=settings.retain_raw_eml,
     )
+    email_upload_service = EmailUploadService()
+    m365_connection_service = M365ConnectionService(M365OAuthConfig.from_settings(settings))
+    m365_mail_sync_service = M365MailSyncService(
+        m365_connection_service,
+        email_upload_service,
+        service,
+        mail_artifact_store,
+        retain_raw_eml=settings.retain_raw_eml,
+    )
     tran_reference_upload_service = TranReferenceUploadService(settings.reference_dir)
     if settings.prepayment_gl is None and settings.damaged_debit_gl != settings.lost_debit_gl:
         raise RuntimeError(
@@ -102,9 +120,7 @@ def create_app(settings: Settings | None = None) -> Flask:
         }
     )
     pypdf_available = importlib.util.find_spec("pypdf") is not None
-    word_pdf_available = bool(
-        os.name == "nt" and importlib.util.find_spec("win32com") is not None
-    )
+    word_pdf_available = bool(os.name == "nt" and importlib.util.find_spec("win32com") is not None)
     try:
         cloud_pdf_available = bool(
             importlib.util.find_spec("weasyprint") is not None
@@ -128,7 +144,7 @@ def create_app(settings: Settings | None = None) -> Flask:
         "accounting_policy_resolver": accounting_policy_resolver,
         "mutation_lock": RLock(),
         "supplier_upload_service": supplier_upload_service,
-        "email_upload_service": EmailUploadService(),
+        "email_upload_service": email_upload_service,
         "mail_artifact_store": mail_artifact_store,
         "mail_pdf_service": MailPdfService(mail_artifact_store, pdf_converter),
         "mail_pdf_available": mail_pdf_available,
@@ -137,6 +153,9 @@ def create_app(settings: Settings | None = None) -> Flask:
         "pypdf_available": pypdf_available,
         "tran_reference_upload_service": tran_reference_upload_service,
         "tran_workflow_service": TranWorkflowService(),
+        "m365_connection_service": m365_connection_service,
+        "m365_mail_sync_service": m365_mail_sync_service,
+        "m365_outlook_draft_service": M365OutlookDraftService(m365_connection_service),
         "test_data_service": TestDataService(
             settings,
             repository,
@@ -153,7 +172,14 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     @app.before_request
     def require_shared_demo_access() -> Response | None:
-        if not settings.access_user or request.path == "/api/health":
+        # The Entra cross-site return cannot reliably carry cached HTTP Basic
+        # credentials. This one callback remains guarded by its opaque session
+        # cookie plus short-lived, one-time MSAL state; all other M365 routes
+        # still require the shared staging gate when it is configured.
+        if not settings.access_user or request.path in {
+            "/api/health",
+            "/api/m365/callback",
+        }:
             return None
         auth = request.authorization
         valid = bool(
@@ -177,6 +203,10 @@ def create_app(settings: Settings | None = None) -> Flask:
             "default-src 'self'; img-src 'self' data:; "
             "style-src 'self'; script-src 'self'; connect-src 'self'",
         )
+        if request.path.startswith("/api/m365/") or request.path == ("/api/tran/outlook-drafts"):
+            response.headers["Cache-Control"] = "private, no-store"
+        if request.path == "/api/m365/callback":
+            response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     @app.errorhandler(CaseNotFoundError)
@@ -196,6 +226,26 @@ def create_app(settings: Settings | None = None) -> Flask:
     def repository_error(exc: RepositoryError) -> tuple[Any, int]:
         app.logger.exception("Repository operation failed")
         return _error(exc, 409)
+
+    @app.errorhandler(M365UnavailableError)
+    def m365_unavailable(exc: M365UnavailableError) -> tuple[Any, int]:
+        return jsonify({"ok": False, "error": str(exc), "capability_available": False}), 503
+
+    @app.errorhandler(M365ReconnectRequired)
+    def m365_reconnect(exc: M365ReconnectRequired) -> tuple[Any, int]:
+        return jsonify({"ok": False, "error": str(exc), "reconnect_required": True}), 401
+
+    @app.errorhandler(M365OAuthStateError)
+    def m365_oauth_error(exc: M365OAuthStateError) -> tuple[Any, int]:
+        return _error(exc, 400)
+
+    @app.errorhandler(M365ProviderError)
+    def m365_provider_error(exc: M365ProviderError) -> tuple[Any, int]:
+        return _error(exc, 502)
+
+    @app.errorhandler(M365ServiceError)
+    def m365_bad_request(exc: M365ServiceError) -> tuple[Any, int]:
+        return _error(exc, 400)
 
     @app.errorhandler(413)
     def too_large(_: Any) -> tuple[Any, int]:

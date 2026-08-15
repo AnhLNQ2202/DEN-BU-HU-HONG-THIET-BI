@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { dashboardApi } from "../api.js";
 import { translate } from "../i18n.js";
 import { formatCurrency } from "../utils.js";
+import { M365MailboxPanel } from "./M365MailboxPanel.jsx";
 import { EmailUploadPanel } from "./UploadWorkspace.jsx";
 
 const MAX_REFERENCE_BYTES = 50 * 1024 * 1024;
@@ -105,6 +106,39 @@ function formFromCase(caseItem) {
       ["classification_confirmed"],
     ) === true,
   };
+}
+
+function formFromSourceRow(caseItem, row) {
+  const base = formFromCase(caseItem);
+  return {
+    ...base,
+    tag_number: String(row?.asset_code || base.tag_number).trim().toUpperCase(),
+    asset_name: String(row?.asset_name || base.asset_name).trim(),
+    domain: String(row?.domain || base.domain).trim(),
+    lost_date: inputDate(row?.loss_date) || base.lost_date,
+    confirmed_cost: inputMoney(row?.original_value) || base.confirmed_cost,
+    confirmed_start_date: inputDate(row?.usage_start) || base.confirmed_start_date,
+  };
+}
+
+export function expandTranCaseRows(caseItem) {
+  const rows = Array.isArray(caseItem?.metadata?.asset_rows)
+    ? caseItem.metadata.asset_rows
+    : [];
+  if (!rows.length) {
+    return [{
+      form: formFromCase(caseItem),
+      binding: { case_id: caseItem.id, source_row_index: null },
+    }];
+  }
+  return rows.map((row, sourceRowIndex) => ({
+    form: formFromSourceRow(caseItem, row),
+    binding: { case_id: caseItem.id, source_row_index: sourceRowIndex },
+  }));
+}
+
+function expandTranGroup(group) {
+  return group?.cases?.flatMap(expandTranCaseRows) || [];
 }
 
 export function buildTranAssetPayload(form, language = "vi") {
@@ -257,12 +291,13 @@ export function TranWorkspace({
   cases,
   language,
   onEmailUpload,
+  onMailboxSynced,
   onReferencesChanged,
   testDataClearVersion,
 }) {
   const [forms, setForms] = useState([{ ...EMPTY_FORM }]);
   const [selectedGroupKey, setSelectedGroupKey] = useState("");
-  const [selectedCaseIds, setSelectedCaseIds] = useState([]);
+  const [sourceBindings, setSourceBindings] = useState([]);
   const [pendingUploadedCaseId, setPendingUploadedCaseId] = useState("");
   const [emailNotice, setEmailNotice] = useState("");
   const [referenceStatus, setReferenceStatus] = useState(EMPTY_REFERENCE_STATUS);
@@ -279,6 +314,9 @@ export function TranWorkspace({
   const [actionError, setActionError] = useState("");
   const [workbookResult, setWorkbookResult] = useState(null);
   const [draftResult, setDraftResult] = useState(null);
+  const [outlookDraftResult, setOutlookDraftResult] = useState(null);
+  const [outlookMailboxConnected, setOutlookMailboxConnected] = useState(false);
+  const [outlookMailboxRefreshVersion, setOutlookMailboxRefreshVersion] = useState(0);
   const [processingDate, setProcessingDate] = useState(localIsoDate());
   const [yearSheet, setYearSheet] = useState("");
   const [bodyIntro, setBodyIntro] = useState("");
@@ -287,15 +325,18 @@ export function TranWorkspace({
   const referenceControllerRef = useRef(null);
   const actionControllerRef = useRef(null);
   const lostCases = useMemo(
-    () => cases.filter((item) => item.case_type === "LOST"),
+    () => cases.filter((item) => (
+      item.case_type === "LOST"
+      && !["ACCOUNTED", "CLOSED"].includes(item.status)
+    )),
     [cases],
   );
   const caseGroups = useMemo(() => groupTranCasesBySource(lostCases), [lostCases]);
   const selectedCases = useMemo(
-    () => selectedCaseIds
-      .map((caseId) => lostCases.find((item) => item.id === caseId))
+    () => sourceBindings
+      .map((binding) => lostCases.find((item) => item.id === binding.case_id))
       .filter(Boolean),
-    [lostCases, selectedCaseIds],
+    [lostCases, sourceBindings],
   );
   const selectedHandles = new Set(selectedCases.map((item) => item.source_eml?.handle).filter(Boolean));
   const sourceHandle = sharedTranSourceHandle(selectedCases);
@@ -303,13 +344,14 @@ export function TranWorkspace({
   const canResolve = capabilities?.tran_lookup === true || referenceStatus.fa_gl.available;
   const canExport = capabilities?.tran_workbook_export === true;
   const canDraft = capabilities?.tran_draft === true;
+  const canOutlookDraft = capabilities?.tran_outlook_draft === true;
 
   useEffect(() => {
     referenceControllerRef.current?.abort();
     actionControllerRef.current?.abort();
     setForms([{ ...EMPTY_FORM }]);
     setSelectedGroupKey("");
-    setSelectedCaseIds([]);
+    setSourceBindings([]);
     setPendingUploadedCaseId("");
     setEmailNotice("");
     setFaFile(null);
@@ -325,6 +367,8 @@ export function TranWorkspace({
     setActionError("");
     setWorkbookResult(null);
     setDraftResult(null);
+    setOutlookDraftResult(null);
+    setOutlookMailboxConnected(false);
     setProcessingDate(localIsoDate());
     setYearSheet("");
     setBodyIntro("");
@@ -352,39 +396,49 @@ export function TranWorkspace({
 
   useEffect(() => {
     if (!pendingUploadedCaseId) return;
+    const uploadedCase = cases.find((item) => item.id === pendingUploadedCaseId);
+    if (!uploadedCase) return;
     const uploaded = lostCases.find((item) => item.id === pendingUploadedCaseId);
-    if (!uploaded) return;
+    if (!uploaded) {
+      setPendingUploadedCaseId("");
+      setEmailNotice(translate(language, "tranEmailFinalizedCase"));
+      return;
+    }
     const group = caseGroups.find((item) => item.cases.some((caseItem) => caseItem.id === uploaded.id));
     if (!group) return;
-    if (group.cases.length > MAX_TRAN_ASSETS) {
+    const expanded = expandTranGroup(group);
+    if (expanded.length > MAX_TRAN_ASSETS) {
       setPendingUploadedCaseId("");
       setEmailNotice(translate(language, "tranTooManyAssets"));
       return;
     }
     setSelectedGroupKey(group.key);
-    setSelectedCaseIds(group.cases.map((caseItem) => caseItem.id));
-    setForms(group.cases.map(formFromCase));
+    setSourceBindings(expanded.map((item) => item.binding));
+    setForms(expanded.map((item) => item.form));
     setResolution(null);
     setWorkbookResult(null);
     setDraftResult(null);
+    setOutlookDraftResult(null);
     setPendingUploadedCaseId("");
     setEmailNotice(translate(language, "tranEmailPrefillReady"));
-  }, [caseGroups, language, lostCases, pendingUploadedCaseId]);
+  }, [caseGroups, cases, language, lostCases, pendingUploadedCaseId]);
 
   useEffect(() => {
     if (!selectedGroupKey || caseGroups.some((item) => item.key === selectedGroupKey)) return;
     setSelectedGroupKey("");
-    setSelectedCaseIds([]);
+    setSourceBindings([]);
     setForms([{ ...EMPTY_FORM }]);
     setResolution(null);
     setWorkbookResult(null);
     setDraftResult(null);
+    setOutlookDraftResult(null);
   }, [caseGroups, selectedGroupKey]);
 
   function invalidateOutputs() {
     setResolution(null);
     setWorkbookResult(null);
     setDraftResult(null);
+    setOutlookDraftResult(null);
     setActionError("");
   }
 
@@ -397,13 +451,14 @@ export function TranWorkspace({
 
   function chooseCaseGroup(groupKey) {
     const group = caseGroups.find((item) => item.key === groupKey);
-    if (group && group.cases.length > MAX_TRAN_ASSETS) {
+    const expanded = expandTranGroup(group);
+    if (expanded.length > MAX_TRAN_ASSETS) {
       setActionError(translate(language, "tranTooManyAssets"));
       return;
     }
     setSelectedGroupKey(groupKey);
-    setSelectedCaseIds(group ? group.cases.map((item) => item.id) : []);
-    setForms(group ? group.cases.map(formFromCase) : [{ ...EMPTY_FORM }]);
+    setSourceBindings(expanded.map((item) => item.binding));
+    setForms(expanded.length ? expanded.map((item) => item.form) : [{ ...EMPTY_FORM }]);
     setEmailNotice("");
     invalidateOutputs();
   }
@@ -411,7 +466,7 @@ export function TranWorkspace({
   function removeAssetRow(index) {
     if (forms.length <= 1) return;
     setForms((current) => current.filter((_, itemIndex) => itemIndex !== index));
-    setSelectedCaseIds((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    setSourceBindings((current) => current.filter((_, itemIndex) => itemIndex !== index));
     invalidateOutputs();
   }
 
@@ -490,6 +545,7 @@ export function TranWorkspace({
     setActionError("");
     setWorkbookResult(null);
     setDraftResult(null);
+    setOutlookDraftResult(null);
     try {
       setResolution(await dashboardApi.resolveTranAssets(
         buildTranAssetsPayload(forms, language),
@@ -543,6 +599,7 @@ export function TranWorkspace({
     try {
       setDraftResult(await dashboardApi.createTranDraft(
         buildTranAssetsPayload(forms, language),
+        sourceBindings,
         sourceHandle,
         intro,
         processingDate,
@@ -551,6 +608,43 @@ export function TranWorkspace({
       ));
     } catch (error) {
       if (error.name !== "AbortError") setActionError(error.message);
+    } finally {
+      if (!controller.signal.aborted) setBusyAction("");
+    }
+  }
+
+  async function createOutlookDraft() {
+    const intro = bodyIntro.trim();
+    if (!resolution?.ready || !canOutlookDraft || !outlookMailboxConnected || !sourceHandle) return;
+    if (!intro) {
+      setActionError(translate(language, "tranDraftIntroRequired"));
+      return;
+    }
+    const controller = new AbortController();
+    actionControllerRef.current?.abort();
+    actionControllerRef.current = controller;
+    setBusyAction("outlook-draft");
+    setActionError("");
+    setOutlookDraftResult(null);
+    try {
+      setOutlookDraftResult(await dashboardApi.createTranOutlookDraft(
+        buildTranAssetsPayload(forms, language),
+        sourceBindings,
+        sourceHandle,
+        intro,
+        processingDate,
+        yearSheet.trim(),
+        controller.signal,
+      ));
+    } catch (error) {
+      if (error.name !== "AbortError") {
+        setActionError(error.message);
+        if (error.status === 401 || error.status === 503) {
+          setOutlookMailboxConnected(false);
+          setOutlookMailboxRefreshVersion((current) => current + 1);
+          await Promise.resolve(onMailboxSynced?.()).catch(() => {});
+        }
+      }
     } finally {
       if (!controller.signal.aborted) setBusyAction("");
     }
@@ -577,6 +671,15 @@ export function TranWorkspace({
         titleKey="tranEmailUploadPanel"
       />
       {emailNotice && <div className="dialog-note" role="status"><p>{emailNotice}</p></div>}
+
+      <M365MailboxPanel
+        capabilities={capabilities}
+        language={language}
+        onStatusChange={(nextStatus) => setOutlookMailboxConnected(nextStatus?.connected === true)}
+        onSynced={onMailboxSynced}
+        refreshVersion={`${testDataClearVersion}:${outlookMailboxRefreshVersion}`}
+        role="tran"
+      />
 
       <section className="panel operation-panel">
         <div className="pdf-panel-heading">
@@ -668,7 +771,7 @@ export function TranWorkspace({
                 {caseGroups.map((group) => (
                   <option value={group.key} key={group.key}>
                     {group.handle
-                      ? `${group.cases[0]?.source_eml?.filename || group.cases[0]?.asset_code} · ${group.cases.length} ${translate(language, "tranAssets")}`
+                      ? `${group.cases[0]?.source_eml?.filename || group.cases[0]?.asset_code} · ${expandTranGroup(group).length} ${translate(language, "tranAssets")}`
                       : `${group.cases[0]?.asset_code} · ${group.cases[0]?.domain}`}
                   </option>
                 ))}
@@ -679,7 +782,7 @@ export function TranWorkspace({
               type="button"
               onClick={() => {
                 setSelectedGroupKey("");
-                setSelectedCaseIds([]);
+                setSourceBindings([]);
                 setForms([{ ...DEMO_FORM, lost_date: localIsoDate() }]);
                 setEmailNotice("");
                 invalidateOutputs();
@@ -697,7 +800,7 @@ export function TranWorkspace({
 
           <div className="tran-asset-editor-list">
             {forms.map((form, index) => (
-              <article className="tran-asset-editor" key={selectedCaseIds[index] || `manual-${index}`}>
+              <article className="tran-asset-editor" key={sourceBindings[index] ? `${sourceBindings[index].case_id}:${sourceBindings[index].source_row_index ?? "case"}` : `manual-${index}`}>
                 <header>
                   <strong>{translate(language, "tranAssetRow")} {index + 1}</strong>
                   <span>{form.tag_number || translate(language, "manualEntry")}</span>
@@ -707,10 +810,13 @@ export function TranWorkspace({
                     </button>
                   )}
                 </header>
+                {sourceBindings[index] && (
+                  <p className="field-hint">{translate(language, "tranSourceIdentityLocked")}</p>
+                )}
                 <div className="compensation-grid">
-                  <label><span>{translate(language, "tagNumber")} *</span><input type="text" value={form.tag_number} onChange={(event) => updateField(index, "tag_number", event.target.value.toUpperCase())} required /></label>
-                  <label><span>{translate(language, "assetName")} *</span><input type="text" value={form.asset_name} onChange={(event) => updateField(index, "asset_name", event.target.value)} required /></label>
-                  <label><span>{translate(language, "domain")} *</span><input type="text" value={form.domain} onChange={(event) => updateField(index, "domain", event.target.value)} required /></label>
+                  <label><span>{translate(language, "tagNumber")} *</span><input type="text" maxLength={255} value={form.tag_number} readOnly={Boolean(sourceBindings[index])} aria-readonly={sourceBindings[index] ? "true" : undefined} onChange={(event) => updateField(index, "tag_number", event.target.value.toUpperCase())} required /></label>
+                  <label><span>{translate(language, "assetName")} *</span><input type="text" maxLength={1024} value={form.asset_name} onChange={(event) => updateField(index, "asset_name", event.target.value)} required /></label>
+                  <label><span>{translate(language, "domain")} *</span><input type="text" maxLength={253} value={form.domain} readOnly={Boolean(sourceBindings[index])} aria-readonly={sourceBindings[index] ? "true" : undefined} onChange={(event) => updateField(index, "domain", event.target.value)} required /></label>
                   <label><span>{translate(language, "lostDate")} *</span><input type="date" value={form.lost_date} onChange={(event) => updateField(index, "lost_date", event.target.value)} required /></label>
                   <label>
                     <span>{translate(language, "physicalAsset")} *</span>
@@ -729,7 +835,7 @@ export function TranWorkspace({
                   <summary>{translate(language, "tranOperatorDecisions")}</summary>
                   <p className="field-hint">{translate(language, "tranOperatorDecisionHint")}</p>
                   <div className="compensation-grid">
-                    <label><span>{translate(language, "originalCost")}</span><input type="text" inputMode="numeric" pattern="[0-9]*" value={form.confirmed_cost} onChange={(event) => { if (/^\d*$/.test(event.target.value)) updateField(index, "confirmed_cost", event.target.value); }} /></label>
+                    <label><span>{translate(language, "originalCost")}</span><input type="text" inputMode="numeric" pattern="[0-9]*" maxLength={32} value={form.confirmed_cost} onChange={(event) => { if (/^\d*$/.test(event.target.value)) updateField(index, "confirmed_cost", event.target.value); }} /></label>
                     <label><span>{translate(language, "startDate")}</span><input type="date" value={form.confirmed_start_date} onChange={(event) => updateField(index, "confirmed_start_date", event.target.value)} /></label>
                     <label>
                       <span>{translate(language, "depreciationOverride")}</span>
@@ -801,9 +907,9 @@ export function TranWorkspace({
               <h4>{translate(language, "tranOutputs")}</h4>
               <div className="panel-row tran-output-controls">
                 <label className="small" htmlFor="tran-processing-date">{translate(language, "tranProcessingDate")}</label>
-                <input id="tran-processing-date" type="date" value={processingDate} onChange={(event) => { setProcessingDate(event.target.value); setWorkbookResult(null); setDraftResult(null); }} />
+                <input id="tran-processing-date" type="date" value={processingDate} onChange={(event) => { setProcessingDate(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); }} />
                 <label className="small" htmlFor="tran-year-sheet">{translate(language, "tranYearSheet")}</label>
-                <input id="tran-year-sheet" className="short-input" type="text" maxLength="31" value={yearSheet} placeholder={processingDate.slice(0, 4)} onChange={(event) => { setYearSheet(event.target.value); setWorkbookResult(null); setDraftResult(null); }} />
+                <input id="tran-year-sheet" className="short-input" type="text" maxLength="31" value={yearSheet} placeholder={processingDate.slice(0, 4)} onChange={(event) => { setYearSheet(event.target.value); setWorkbookResult(null); setDraftResult(null); setOutlookDraftResult(null); }} />
                 <button className="btn" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canExport} onClick={exportWorkbook}>
                   {translate(language, busyAction === "workbook" ? "tranExporting" : "tranExportWorkbook")}
                 </button>
@@ -821,16 +927,21 @@ export function TranWorkspace({
                   maxLength="10000"
                   value={bodyIntro}
                   placeholder={translate(language, "tranDraftIntroPlaceholder")}
-                  onChange={(event) => { setBodyIntro(event.target.value); setDraftResult(null); setActionError(""); }}
+                  onChange={(event) => { setBodyIntro(event.target.value); setDraftResult(null); setOutlookDraftResult(null); setActionError(""); }}
                 />
                 <div className="upload-actions">
                   <button className="btn secondary" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canDraft || !sourceHandle} onClick={createDraft}>
                     {translate(language, busyAction === "draft" ? "tranDrafting" : "tranCreateDraft")}
                   </button>
-                  <span className="disabled-note">{translate(language, "tranNeverSend")}</span>
+                  <button className="btn" type="button" disabled={Boolean(busyAction) || referenceBusy || !resolution.ready || !canOutlookDraft || !outlookMailboxConnected || !sourceHandle} onClick={createOutlookDraft}>
+                    {translate(language, busyAction === "outlook-draft" ? "tranOutlookDrafting" : "tranCreateOutlookDraft")}
+                  </button>
                 </div>
+                <span className="disabled-note">{translate(language, "tranDraftSafety")}</span>
                 {!sourceHandle && <div className="disabled-note">{translate(language, selectedHandles.size > 1 ? "tranDraftMixedSources" : "tranDraftNeedsSource")}</div>}
                 {!canDraft && <div className="disabled-note">{translate(language, "tranDraftUnavailable")}</div>}
+                {canOutlookDraft && !outlookMailboxConnected && <div className="disabled-note">{translate(language, "tranOutlookDraftNeedsConnection")}</div>}
+                {!canOutlookDraft && <div className="disabled-note">{translate(language, "tranOutlookDraftUnavailable")}</div>}
               </div>
               {draftResult && (
                 <div className="upload-result">
@@ -838,6 +949,20 @@ export function TranWorkspace({
                   <div className="result-list">
                     {draftResult.workbook_download_url && <div className="result-file"><span>{translate(language, "tranDraftWorkbook")}</span><a href={draftResult.workbook_download_url} download>↓ Excel</a></div>}
                     {draftResult.draft_download_url && <div className="result-file"><span>{translate(language, "tranUnsentEml")}</span><a href={draftResult.draft_download_url} download>↓ EML</a></div>}
+                  </div>
+                </div>
+              )}
+              {outlookDraftResult && (
+                <div className="upload-result">
+                  <strong>{translate(language, "tranOutlookDraftReady")}</strong>
+                  <div className="result-list">
+                    {outlookDraftResult.workbook_download_url && <div className="result-file"><span>{translate(language, "tranDraftWorkbook")}</span><a href={outlookDraftResult.workbook_download_url} download>↓ Excel</a></div>}
+                    <div className="result-file">
+                      <span>{outlookDraftResult.outlook_draft?.subject || translate(language, "tranOutlookDraftNoSubject")}</span>
+                      {outlookDraftResult.outlook_draft?.web_url
+                        ? <a href={outlookDraftResult.outlook_draft.web_url} target="_blank" rel="noreferrer">{translate(language, "tranOpenOutlookDraft")}</a>
+                        : <span className="none">{translate(language, "tranOutlookDraftOpenUnavailable")}</span>}
+                    </div>
                   </div>
                 </div>
               )}

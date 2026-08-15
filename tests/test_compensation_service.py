@@ -297,3 +297,35 @@ def test_money_is_rounded_half_up_with_decimal_arithmetic() -> None:
 def test_invalid_inputs_fail_closed(overrides: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         _asset(**overrides)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"tag_number": "T" * 256},
+        {"asset_name": "A" * 1_025},
+        {"domain": "d" * 254},
+        {"asset_name": "unsafe\x00name"},
+        {"cost": "0" * 33},
+        {"cost": 9_007_199_254_740_992},
+    ],
+)
+def test_asset_input_size_and_vnd_bounds_fail_closed(
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        _asset(**overrides)
+
+
+def test_asset_input_exact_bounds_remain_valid() -> None:
+    asset = _asset(
+        tag_number="T" * 255,
+        asset_name="A" * 1_024,
+        domain="d" * 253,
+        cost=9_007_199_254_740_991,
+    )
+
+    assert len(asset.tag_number) == 255
+    assert len(asset.asset_name) == 1_024
+    assert len(asset.domain) == 253
+    assert asset.cost == 9_007_199_254_740_991

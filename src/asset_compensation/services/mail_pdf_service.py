@@ -7,6 +7,7 @@ import re
 import shutil
 import tempfile
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
 from asset_compensation.adapters.pdf import (
@@ -112,7 +113,8 @@ class MailPdfService:
         root = Path(destination_root).expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
         final_directory = root / safe_batch
-        reservation = root / f".{safe_batch}.lock"
+        reservation_key = sha256(safe_batch.encode("utf-8")).hexdigest()[:16]
+        reservation = root / f".mp-{reservation_key}.lock"
         try:
             reservation_handle = reservation.open("xb")
         except FileExistsError as exc:
@@ -127,7 +129,7 @@ class MailPdfService:
             if final_directory.exists():
                 raise FileExistsError(f"PDF batch already exists: {final_directory}")
             staging = Path(
-                tempfile.mkdtemp(prefix=f".{safe_batch}.", suffix=".tmp", dir=root)
+                tempfile.mkdtemp(prefix=".mp-", suffix=".tmp", dir=root)
             )
             raw_directory = staging / ".raw"
             individual_directory = staging / "individual"

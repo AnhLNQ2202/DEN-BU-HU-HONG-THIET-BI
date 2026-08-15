@@ -19,6 +19,13 @@ from asset_compensation.domain import (
     ReferenceStatus,
     ValidationError,
 )
+from asset_compensation.domain.compensation import (
+    MAX_ASSET_NAME_CHARS,
+    MAX_ASSET_TAG_CHARS,
+    MAX_DOMAIN_CHARS,
+    MAX_NUMERIC_INPUT_CHARS,
+    MAX_SAFE_VND,
+)
 
 from .compensation_service import CompensationService, known_fee, known_group
 
@@ -30,10 +37,14 @@ _LENOVO_ADAPTER_COST = Decimal("1060000")
 _APPLE_ADAPTER_COST = Decimal("2044545")
 
 
-def _required_text(value: object, field_name: str) -> str:
+def _required_text(value: object, field_name: str, max_length: int) -> str:
     result = str(value or "").strip()
     if not result:
         raise ValidationError(f"{field_name} is required")
+    if len(result) > max_length or any(
+        ord(character) < 32 or ord(character) == 127 for character in result
+    ):
+        raise ValidationError(f"{field_name} exceeds the safe text limit")
     return result
 
 
@@ -55,11 +66,19 @@ def _optional_cost(value: Decimal | int | str | None) -> Decimal | None:
         return None
     if isinstance(value, bool):
         raise ValidationError("confirmed_cost must be a positive whole VND amount")
+    text = str(value).strip()
+    if len(text) > MAX_NUMERIC_INPUT_CHARS:
+        raise ValidationError("confirmed_cost must be a positive whole VND amount")
     try:
-        result = Decimal(str(value).strip())
+        result = Decimal(text)
     except (InvalidOperation, ValueError) as exc:
         raise ValidationError("confirmed_cost must be a positive whole VND amount") from exc
-    if not result.is_finite() or result <= 0 or result != result.to_integral_value():
+    if (
+        not result.is_finite()
+        or result <= 0
+        or result > MAX_SAFE_VND
+        or result != result.to_integral_value()
+    ):
         raise ValidationError("confirmed_cost must be a positive whole VND amount")
     return result
 
@@ -69,7 +88,10 @@ def _optional_group(value: DepreciationGroup | str | None) -> DepreciationGroup 
         return None
     if isinstance(value, DepreciationGroup):
         return value
-    normalized = str(value).strip().upper().replace("-", "_").replace(" ", "_")
+    text = str(value).strip()
+    if len(text) > MAX_NUMERIC_INPUT_CHARS:
+        raise ValidationError("confirmed_group must be FOUR_YEAR or SIX_YEAR")
+    normalized = text.upper().replace("-", "_").replace(" ", "_")
     aliases = {
         "4": DepreciationGroup.FOUR_YEAR,
         "4_YEAR": DepreciationGroup.FOUR_YEAR,
@@ -88,6 +110,8 @@ def _optional_fee(value: Decimal | int | float | str | None) -> Decimal | None:
     if value in (None, ""):
         return None
     text = str(value).strip()
+    if len(text) > MAX_NUMERIC_INPUT_CHARS:
+        raise ValidationError("confirmed_fee_rate must be 0.05 or 0.30")
     percentage = text.endswith("%")
     if percentage:
         text = text[:-1]
@@ -119,10 +143,24 @@ class TranAssetRequest:
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self, "tag_number", _required_text(self.tag_number, "tag_number").upper()
+            self,
+            "tag_number",
+            _required_text(
+                self.tag_number, "tag_number", MAX_ASSET_TAG_CHARS
+            ).upper(),
         )
-        object.__setattr__(self, "asset_name", _required_text(self.asset_name, "asset_name"))
-        object.__setattr__(self, "domain", _required_text(self.domain, "domain"))
+        object.__setattr__(
+            self,
+            "asset_name",
+            _required_text(
+                self.asset_name, "asset_name", MAX_ASSET_NAME_CHARS
+            ),
+        )
+        object.__setattr__(
+            self,
+            "domain",
+            _required_text(self.domain, "domain", MAX_DOMAIN_CHARS),
+        )
         object.__setattr__(self, "lost_date", _optional_date(self.lost_date, "lost_date"))
         object.__setattr__(
             self,

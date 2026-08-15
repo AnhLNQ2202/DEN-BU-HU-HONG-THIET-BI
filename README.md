@@ -15,6 +15,10 @@ start with [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
 ## Why it matters
 
 - Detects `DAMAGED` and `LOST` cases from saved EML evidence.
+- Optionally connects two independent Microsoft 365 accounts: NganTLT reads one
+  explicitly selected folder with delegated `Mail.Read`, while TranNNB uses
+  `Mail.ReadWrite` so the product can create an unsent Reply-All draft. The app
+  never requests `Mail.Send`.
 - Previews `LOST` compensation under the TranNNB/IT.POL.01 rules, with an
   explicit `NEEDS_REVIEW` result whenever source data is incomplete or
   ambiguous.
@@ -36,6 +40,7 @@ React dashboard -> Flask JSON API
           -> SQLite repository
           -> EML/Supplier parsers
           -> Excel/PDF/RFC822-draft adapters
+          -> optional Microsoft Graph folder-sync/draft adapter
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for decisions, API contracts and the
@@ -80,6 +85,15 @@ Runtime state is created below `var/` and is ignored by Git.
 4. Run ingestion from the UI or CLI.
 5. Review warnings and move valid cases through the workflow.
 6. Export only cases marked `READY_FOR_ACCOUNTING`.
+
+Instead of uploading EML manually, an optional Microsoft 365 integration can
+connect one mailbox for each role and ingest only newly created messages from
+one selected folder. The first sync is limited to the latest 30 days. The UI can
+repeat sync every five minutes while its browser tab is open and visible; this
+is not a durable background worker. OAuth sessions, selected folders and delta
+cursors currently live in process memory and are lost on restart. Follow
+[docs/MICROSOFT_365.md](docs/MICROSOFT_365.md) for Entra registration, Render
+environment values, permissions and limits.
 
 To download source EML, create individual PDFs, or merge mail evidence on a
 trusted local machine, explicitly enable private retention before starting the
@@ -135,8 +149,10 @@ pytest --cov=asset_compensation
 
 The core test suite does not require Microsoft Word. Word PDF conversion is an
 optional Windows COM adapter and should be tested separately on a machine with
-Office installed. The product generates a downloadable RFC822 `.eml` draft; it
-does not include an Outlook mailbox, display, or send adapter.
+Office installed. The product keeps its downloadable RFC822 `.eml` draft flow.
+When Microsoft 365 is configured, TranNNB can additionally create an
+unsent Reply-All draft in the connected Outlook mailbox and attach the generated
+workbook. There is no Outlook `Display()` automation and no send endpoint.
 
 ## Demo
 

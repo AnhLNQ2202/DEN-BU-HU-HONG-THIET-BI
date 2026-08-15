@@ -6,13 +6,13 @@ business decisions independent from file formats and Windows automation.
 ```text
 React dashboard / CLI
    |
-Application services  ---- status policy, compensation preview, batch orchestration
+Flask API             ---- shared auth, bounded HTTP validation, OAuth callback
+   |
+Application services  ---- status policy, compensation, sync, batch orchestration
    |
 Domain model          ---- Case, warning, accounting entry, audit event
    |
-Ports                 ---- repository, parser, exporter, document generator
-   |
-Adapters              ---- SQLite, EML, Excel, Word/cloud PDF, RFC822 draft
+Ports / adapters      ---- SQLite, EML, Excel, PDF, RFC822 draft, Microsoft Graph
 ```
 
 ## Design decisions
@@ -23,10 +23,13 @@ Adapters              ---- SQLite, EML, Excel, Word/cloud PDF, RFC822 draft
    warnings; it does not write workbooks or update case state.
 3. **Exports are explicit and idempotent.** A batch is created from selected
    case IDs. The service rejects duplicate or ineligible cases before writing.
-4. **External automation is optional.** Word PDF conversion is loaded only on
-   Windows; Linux/Render uses the sandboxed cloud renderer. The product creates
-   an RFC822 `.eml` draft but has no Outlook mailbox/display/send adapter. The
-   core application and demo remain cross-platform.
+4. **External automation is optional and least-privileged.** Word PDF conversion
+   is loaded only on Windows; Linux/Render uses the sandboxed cloud renderer.
+   The local RFC822 `.eml` draft remains available without a mailbox connection.
+   Optional Microsoft Graph integration keeps two role-scoped OAuth token caches:
+   Ngan uses delegated `Mail.Read`; Tran uses `Mail.ReadWrite` to create an
+   unsent Reply-All draft. The product never requests `Mail.Send`, has no send
+   route and does not automate Outlook `Display()`.
 5. **Operational data is private by default.** EML, Excel and PDF files are
    ignored by Git. The repository contains synthetic demo records only.
 6. **The server is local by default.** Binding to a LAN interface requires an
@@ -40,6 +43,13 @@ Adapters              ---- SQLite, EML, Excel, Word/cloud PDF, RFC822 draft
    exemption rules without editing source workbooks, changing case state or
    sending mail. Unknown or conflicting inputs are returned as
    `NEEDS_REVIEW`; they are never guessed.
+9. **Mailbox scope is explicit and ephemeral in the MVP.** Each role connects
+   independently, selects exactly one folder and syncs only `created` changes
+   from that folder. The first pass looks back 30 days. Tokens, folder choices
+   and delta cursors remain in a bounded 8-hour in-memory browser session, so a
+   restart requires reconnect/reselect/resync. The five-minute UI auto-sync is
+   active only while the tab is open and visible; it is not a server worker or
+   webhook.
 
 ## Case lifecycle
 
@@ -65,6 +75,13 @@ creating another accounting candidate.
 - `GET /api/suppliers/status`
 - `POST /api/suppliers/upload`
 - `POST /api/emails/upload`
+- `GET /api/m365/<role>/status`
+- `POST /api/m365/<role>/connect`
+- `GET /api/m365/callback`
+- `POST /api/m365/<role>/disconnect`
+- `GET /api/m365/<role>/folders`
+- `POST /api/m365/<role>/folder`
+- `POST /api/m365/<role>/sync`
 - `POST /api/test-data/clear` (explicitly enabled disposable staging only)
 - `POST /api/compensation/preview`
 - `GET /api/tran/references/status`
@@ -73,6 +90,7 @@ creating another accounting candidate.
 - `POST /api/tran/workbooks`
 - `GET /api/tran/workbooks/<output_id>/download`
 - `POST /api/tran/drafts`
+- `POST /api/tran/outlook-drafts`
 - `GET /api/tran/drafts/<output_id>/download`
 - `GET /api/mail-artifacts/<handle>/download`
 - `POST /api/mail-pdfs/individual`
@@ -90,9 +108,14 @@ See [docs/UPLOAD_API.md](docs/UPLOAD_API.md) for upload limits, collision
 handling, privacy guarantees and multipart contracts.
 See [docs/TRAN_API.md](docs/TRAN_API.md) for reference upload, Tran workbook,
 unsent draft, retained EML and PDF contracts.
+See [docs/MICROSOFT_365.md](docs/MICROSOFT_365.md) for OAuth, exact-folder sync,
+Graph Reply-All draft, permissions, limits and deployment configuration.
 
 ## Growth path
 
 For a small local team, SQLite and synchronous jobs are sufficient. Revisit
 authentication, background queues, object storage and PostgreSQL only when the
 product moves from a hackathon/local workflow to a shared production service.
+Durable mailbox sync also requires encrypted token/cursor persistence, a worker
+or Graph webhook/subscription lifecycle, distributed coordination and per-user
+SSO/RBAC; the current browser timer is deliberately not that architecture.

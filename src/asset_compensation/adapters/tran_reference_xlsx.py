@@ -33,6 +33,17 @@ _FA_HEADERS = {
 }
 _NONPHYSICAL_GROUP_TYPES = {"service", "software", "virtual asset"}
 
+# Operational snapshots are currently well below these ceilings. The limits
+# deliberately leave substantial headroom while preventing a sparse Excel sheet
+# whose declared row is 1,048,576 from monopolizing a small staging worker.
+MAX_REFERENCE_ROWS_PER_SHEET = 200_000
+MAX_FA_SCANNED_ROWS = 300_000
+MAX_FA_RECORDS = 200_000
+MAX_CCDC_SCANNED_ROWS = 300_000
+MAX_CCDC_RECORDS = 200_000
+MAX_REFERENCE_TAG_CHARS = 255
+MAX_REFERENCE_TEXT_CHARS = 1_024
+
 
 class TranReferenceError(ValidationError):
     """Raised when a reference workbook violates the documented contract."""
@@ -50,6 +61,32 @@ def _normalized_text(value: object) -> str:
 
 def _tag(value: object) -> str:
     return re.sub(r"\s+", "", _plain_text(value)).upper()
+
+
+def _reference_text(value: object, field: str, *, limit: int) -> str:
+    text = _plain_text(value)
+    if len(text) > limit:
+        raise TranReferenceError(f"{field} exceeds the safe text limit")
+    return text
+
+
+def _reference_tag(value: object, field: str) -> str:
+    return re.sub(
+        r"\s+",
+        "",
+        _reference_text(value, field, limit=MAX_REFERENCE_TAG_CHARS),
+    ).upper()
+
+
+def _sheet_row_count(sheet: object, label: str) -> int:
+    raw = getattr(sheet, "max_row", 0) or 0
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise TranReferenceError(f"{label} has an invalid row extent")
+    if raw > MAX_REFERENCE_ROWS_PER_SHEET:
+        raise TranReferenceError(
+            f"{label} exceeds the {MAX_REFERENCE_ROWS_PER_SHEET:,}-row safety limit"
+        )
+    return raw
 
 
 def _date_value(value: object) -> date | None:
@@ -151,6 +188,18 @@ class FaGlWorkbookIndex:
                 raise TranReferenceError(
                     "FA&GL workbook is missing required sheets: " + ", ".join(missing)
                 )
+            scanned_rows = sum(
+                max(
+                    0,
+                    _sheet_row_count(workbook[sheet_name], sheet_name) - data_row + 1,
+                )
+                for sheet_name, (_, data_row, _, _) in _FA_SHEETS.items()
+            )
+            if scanned_rows > MAX_FA_SCANNED_ROWS:
+                raise TranReferenceError(
+                    "FA&GL workbook exceeds the combined row safety limit"
+                )
+            record_count = 0
             for sheet_name, (header_row, data_row, book, entity) in _FA_SHEETS.items():
                 sheet = workbook[sheet_name]
                 for column, expected in _FA_HEADERS.items():
@@ -170,21 +219,53 @@ class FaGlWorkbookIndex:
                     ),
                     start=data_row,
                 ):
-                    tag_number = _tag(values[15])
+                    tag_number = _reference_tag(
+                        values[15], f"{sheet_name}!P{row_number}"
+                    )
                     if not tag_number:
                         continue
+                    record_count += 1
+                    if record_count > MAX_FA_RECORDS:
+                        raise TranReferenceError(
+                            "FA&GL workbook exceeds the indexed-record safety limit"
+                        )
                     indexed[tag_number].append(
                         FaGlRecord(
                             tag_number=tag_number,
-                            asset_number=_plain_text(values[11]) or None,
+                            asset_number=_reference_text(
+                                values[11],
+                                f"{sheet_name}!L{row_number}",
+                                limit=MAX_REFERENCE_TEXT_CHARS,
+                            )
+                            or None,
                             start_date=_date_value(values[21]),
                             cost=_whole_vnd(values[26]),
                             book=book,
                             entity=entity,
-                            cost_center=_plain_text(values[6]) or None,
-                            product_code=_plain_text(values[7]) or None,
-                            location=_plain_text(values[9]) or None,
-                            company_name=_plain_text(values[1]) or None,
+                            cost_center=_reference_text(
+                                values[6],
+                                f"{sheet_name}!G{row_number}",
+                                limit=MAX_REFERENCE_TEXT_CHARS,
+                            )
+                            or None,
+                            product_code=_reference_text(
+                                values[7],
+                                f"{sheet_name}!H{row_number}",
+                                limit=MAX_REFERENCE_TEXT_CHARS,
+                            )
+                            or None,
+                            location=_reference_text(
+                                values[9],
+                                f"{sheet_name}!J{row_number}",
+                                limit=MAX_REFERENCE_TEXT_CHARS,
+                            )
+                            or None,
+                            company_name=_reference_text(
+                                values[1],
+                                f"{sheet_name}!B{row_number}",
+                                limit=MAX_REFERENCE_TEXT_CHARS,
+                            )
+                            or None,
                             source_file=source_path.name,
                             source_sheet=sheet_name,
                             source_row=row_number,
@@ -256,11 +337,20 @@ def _classification_group(
 
 
 def _header_map(sheet: object, required: set[str]) -> tuple[int, dict[str, int]] | None:
-    for row_number in range(1, min(getattr(sheet, "max_row", 1), 25) + 1):
+    max_row = min(getattr(sheet, "max_row", 1) or 1, 25)
+    max_column = min(getattr(sheet, "max_column", 1) or 1, 100)
+    rows = sheet.iter_rows(
+        min_row=1,
+        max_row=max_row,
+        min_col=1,
+        max_col=max_column,
+        values_only=True,
+    )
+    for row_number, values in enumerate(rows, start=1):
         columns = {
-            _normalized_text(sheet.cell(row_number, column).value): column
-            for column in range(1, min(getattr(sheet, "max_column", 1), 100) + 1)
-            if _plain_text(sheet.cell(row_number, column).value)
+            _normalized_text(value): column
+            for column, value in enumerate(values, start=1)
+            if _plain_text(value)
         }
         if required.issubset(columns):
             return row_number, columns
@@ -294,6 +384,19 @@ class CcdcWorkbookIndex:
         classifications: dict[str, list[CcdcClassification]] = defaultdict(list)
         start_dates: dict[str, list[date]] = defaultdict(list)
         try:
+            present_sheets = [
+                name
+                for name in ("Define", "CMDB", "BC Xuatkho")
+                if name in workbook.sheetnames
+            ]
+            scanned_rows = sum(
+                _sheet_row_count(workbook[name], name) for name in present_sheets
+            )
+            if scanned_rows > MAX_CCDC_SCANNED_ROWS:
+                raise TranReferenceError(
+                    "CCDC workbook exceeds the combined row safety limit"
+                )
+            record_count = 0
             if "Define" in workbook.sheetnames:
                 sheet = workbook["Define"]
                 found = _header_map(sheet, {"product type", "barcode", "group type"})
@@ -302,19 +405,39 @@ class CcdcWorkbookIndex:
                         "Define must contain Product Type, Barcode, and Group Type headers"
                     )
                 header_row, columns = found
-                for row_number in range(header_row + 1, sheet.max_row + 1):
-                    barcode = _tag(sheet.cell(row_number, columns["barcode"]).value)[:3]
+                max_column = max(columns.values())
+                rows = sheet.iter_rows(
+                    min_row=header_row + 1,
+                    max_row=sheet.max_row,
+                    min_col=1,
+                    max_col=max_column,
+                    values_only=True,
+                )
+                for row_number, values in enumerate(rows, start=header_row + 1):
+                    barcode = _reference_tag(
+                        values[columns["barcode"] - 1],
+                        f"Define barcode row {row_number}",
+                    )[:3]
                     if not barcode:
                         continue
-                    product_type = _plain_text(
-                        sheet.cell(row_number, columns["product type"]).value
+                    product_type = _reference_text(
+                        values[columns["product type"] - 1],
+                        f"Define product type row {row_number}",
+                        limit=MAX_REFERENCE_TEXT_CHARS,
                     )
-                    group_type = _plain_text(
-                        sheet.cell(row_number, columns["group type"]).value
+                    group_type = _reference_text(
+                        values[columns["group type"] - 1],
+                        f"Define group type row {row_number}",
+                        limit=MAX_REFERENCE_TEXT_CHARS,
                     )
                     group, physical = _classification_group(
                         barcode, product_type, group_type
                     )
+                    record_count += 1
+                    if record_count > MAX_CCDC_RECORDS:
+                        raise TranReferenceError(
+                            "CCDC workbook exceeds the indexed-record safety limit"
+                        )
                     classifications[barcode].append(
                         CcdcClassification(
                             barcode=barcode,
@@ -332,14 +455,32 @@ class CcdcWorkbookIndex:
                 if found is None:
                     raise TranReferenceError("CMDB must contain Asset Name and Product Type")
                 header_row, columns = found
-                for row_number in range(header_row + 1, sheet.max_row + 1):
-                    barcode = _tag(sheet.cell(row_number, columns["asset name"]).value)[:3]
+                max_column = max(columns.values())
+                rows = sheet.iter_rows(
+                    min_row=header_row + 1,
+                    max_row=sheet.max_row,
+                    min_col=1,
+                    max_col=max_column,
+                    values_only=True,
+                )
+                for row_number, values in enumerate(rows, start=header_row + 1):
+                    barcode = _reference_tag(
+                        values[columns["asset name"] - 1],
+                        f"CMDB asset name row {row_number}",
+                    )[:3]
                     if not barcode or barcode in classifications:
                         continue
-                    product_type = _plain_text(
-                        sheet.cell(row_number, columns["product type"]).value
+                    product_type = _reference_text(
+                        values[columns["product type"] - 1],
+                        f"CMDB product type row {row_number}",
+                        limit=MAX_REFERENCE_TEXT_CHARS,
                     )
                     group, physical = _classification_group(barcode, product_type, None)
+                    record_count += 1
+                    if record_count > MAX_CCDC_RECORDS:
+                        raise TranReferenceError(
+                            "CCDC workbook exceeds the indexed-record safety limit"
+                        )
                     classifications[barcode].append(
                         CcdcClassification(
                             barcode=barcode,
@@ -360,10 +501,25 @@ class CcdcWorkbookIndex:
                     header_row, columns = found
                     asset_column = columns["asset name"]
                     start_column = columns["start time"]
-                for row_number in range(header_row + 1, sheet.max_row + 1):
-                    tag_number = _tag(sheet.cell(row_number, asset_column).value)
-                    start_date = _date_value(sheet.cell(row_number, start_column).value)
+                rows = sheet.iter_rows(
+                    min_row=header_row + 1,
+                    max_row=sheet.max_row,
+                    min_col=1,
+                    max_col=max(asset_column, start_column),
+                    values_only=True,
+                )
+                for row_number, values in enumerate(rows, start=header_row + 1):
+                    tag_number = _reference_tag(
+                        values[asset_column - 1],
+                        f"BC Xuatkho asset row {row_number}",
+                    )
+                    start_date = _date_value(values[start_column - 1])
                     if tag_number and start_date is not None:
+                        record_count += 1
+                        if record_count > MAX_CCDC_RECORDS:
+                            raise TranReferenceError(
+                                "CCDC workbook exceeds the indexed-record safety limit"
+                            )
                         start_dates[tag_number].append(start_date)
         finally:
             workbook.close()
