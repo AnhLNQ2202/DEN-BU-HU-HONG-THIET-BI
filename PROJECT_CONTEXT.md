@@ -49,8 +49,9 @@ Snapshot này được lập ngày **2026-08-15**:
 | Branch tích hợp | `agent/react-trannnb-team-dev` |
 | Commit feature template/Draft Mail | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
 | Commit đã CI và đang live trên Render | `728734e285ea93a11431918030be36f2bcf14145` |
-| `main` tại snapshot | `c8807c830e46f588990bd2aeb222c2946dc849aa` |
-| Draft PR hiện tại | [PR #5](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/5) |
+| `main` tại snapshot | `58794f42955ceb396a254dedac60ceeda3ac1ce1` |
+| PR feature | [PR #5](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/5), đã merge |
+| Draft PR tài liệu hậu deploy | [PR #6](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/6) |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
@@ -1083,8 +1084,8 @@ giới hạn/next step, không được quảng bá là đã production-ready:
 1. Operator đăng nhập staging và chạy synthetic end-to-end cloud PDF + Tran;
    deploy/health/auth/UI-load đã smoke thành công, nhưng automation không được
    lấy secret từ Render để tự ghi dữ liệu test.
-2. Review draft PR #5, merge vào `main` khi owner chấp thuận; sau merge tạo/tag
-   release nếu cần cho hackathon.
+2. Feature PR #5 đã merge; review draft PR tài liệu #6 và merge khi owner chấp
+   thuận. Tạo/tag release nếu cần cho hackathon.
 3. UAT bằng approved operational accounting template/config trên môi trường
    private; Finance xác nhận 30-column output và GL mapping.
 4. UAT CCDC bằng workbook thật đã phê duyệt; hiện chỉ certified bằng synthetic.
