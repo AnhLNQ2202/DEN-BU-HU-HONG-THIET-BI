@@ -37,6 +37,7 @@ _GRAPH_PATH_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("GET", re.compile(r"/v1\.0/me/mailFolders/[^/]+/messages/[^/]+/\$value")),
     ("GET", re.compile(r"/v1\.0/me/messages/?")),
     ("GET", re.compile(r"/v1\.0/me/messages/[^/]+/?")),
+    ("POST", re.compile(r"/v1\.0/me/messages/?")),
     ("POST", re.compile(r"/v1\.0/me/messages/[^/]+/createReplyAll")),
     ("PATCH", re.compile(r"/v1\.0/me/messages/[^/]+")),
     ("POST", re.compile(r"/v1\.0/me/messages/[^/]+/attachments")),
@@ -614,6 +615,45 @@ class GraphHttpClient:
                 "POST",
                 f"/v1.0/me/messages/{message}/createReplyAll",
                 expected_statuses={200, 201},
+            )
+        except M365GraphReconnectRequired:
+            raise
+        except M365GraphError as exc:
+            raise M365GraphDraftUncertain(
+                "Outlook draft creation status is uncertain", draft_id=None
+            ) from exc
+        try:
+            return self._draft(payload)
+        except M365GraphError as exc:
+            try:
+                draft_id = _graph_id(payload.get("id"), "Draft ID")
+            except M365GraphError:
+                draft_id = None
+            raise M365GraphDraftUncertain(
+                "Outlook draft response is invalid", draft_id=draft_id
+            ) from exc
+
+    def create_message_draft(self, subject: str, html_body: str) -> GraphDraft:
+        """Create one standalone unsent draft with no recipients and no send call."""
+
+        if (
+            not isinstance(subject, str)
+            or not subject.strip()
+            or len(subject) > 998
+            or any(ord(character) < 32 or ord(character) == 127 for character in subject)
+        ):
+            raise M365GraphError("Outlook draft subject is invalid")
+        if not isinstance(html_body, str) or not html_body or len(html_body) > MAX_GRAPH_BODY_CHARS:
+            raise M365GraphError("Outlook draft HTML exceeds the safe limit")
+        try:
+            payload = self._request_json(
+                "POST",
+                "/v1.0/me/messages",
+                expected_statuses={201},
+                json_body={
+                    "subject": subject.strip(),
+                    "body": {"contentType": "HTML", "content": html_body},
+                },
             )
         except M365GraphReconnectRequired:
             raise

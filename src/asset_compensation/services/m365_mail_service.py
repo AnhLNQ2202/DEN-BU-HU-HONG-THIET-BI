@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from email import policy
+from email.parser import BytesHeaderParser
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -28,7 +30,7 @@ from .m365_auth_service import (
     M365RawSyncBatch,
     M365ReconnectRequired,
 )
-from .mail_artifact_service import MailArtifactError, MailArtifactStore
+from .mail_artifact_service import MailArtifactError, MailArtifactStore, safe_eml_basename
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,9 +71,10 @@ class M365SyncResult:
 class M365OutlookDraftResult:
     subject: str | None
     web_url: str | None
+    mode: str = "reply_all"
 
     def to_dict(self) -> dict[str, str | None]:
-        return {"subject": self.subject, "web_url": self.web_url}
+        return {"subject": self.subject, "web_url": self.web_url, "mode": self.mode}
 
 
 class M365MailSyncService:
@@ -182,23 +185,47 @@ class M365MailSyncService:
         payloads: list[EmailPayload] = []
         invalid_count = 0
         for message in batch.messages:
+            upload = EmailUpload(
+                filename=message.filename,
+                content_type="message/rfc822",
+                stream=BytesIO(message.mime_bytes),
+            )
             try:
-                validated = self._uploads.validate(
-                    [
+                validated = self._uploads.validate([upload])[0]
+            except EmailUploadError:
+                try:
+                    validated = self._uploads.validate_forwarded_attachment(
                         EmailUpload(
                             filename=message.filename,
                             content_type="message/rfc822",
                             stream=BytesIO(message.mime_bytes),
                         )
-                    ]
-                )[0]
-            except EmailUploadError:
-                invalid_count += 1
-                continue
+                    )
+                except EmailUploadError:
+                    invalid_count += 1
+                    continue
             # Preserve a data-minimized role/index provenance name after the
             # validator has enforced every existing upload boundary.
-            payloads.append(EmailPayload(filename=message.filename, data=validated.data))
+            payloads.append(
+                EmailPayload(
+                    filename=self._subject_filename(validated.data, validated.filename),
+                    data=validated.data,
+                )
+            )
         return tuple(payloads), invalid_count
+
+    @staticmethod
+    def _subject_filename(data: bytes, fallback: str) -> str:
+        try:
+            headers = BytesHeaderParser(policy=policy.default).parsebytes(data)
+            subject = str(headers.get("subject") or "").strip()
+            candidate = f"{subject}.eml" if subject else fallback
+            return safe_eml_basename(candidate)
+        except Exception:
+            try:
+                return safe_eml_basename(fallback)
+            except MailArtifactError:
+                return "message.eml"
 
     def _remove_unreferenced_artifacts(self, retained: Sequence[Any]) -> None:
         if not retained:
@@ -232,7 +259,7 @@ class M365MailSyncService:
 
 
 class M365OutlookDraftService:
-    """Create an Outlook reply-all draft while structurally exposing no send call."""
+    """Create an unsent Outlook draft while structurally exposing no send call."""
 
     def __init__(self, connection_service: M365ConnectionService) -> None:
         self._connections = connection_service
@@ -254,21 +281,47 @@ class M365OutlookDraftService:
         if size <= 0 or size >= MAX_DIRECT_ATTACHMENT_BYTES:
             raise M365ProviderError("Generated workbook exceeds the safe Outlook attachment limit")
 
+        personal_forwarding = self._connections.personal_forwarding_inbox
         try:
-            message_id = extract_source_message_id(original_eml)
             # Validate the approved intro/table prefix before Graph can create
-            # any draft. The second build below adds and safely bounds Outlook's
-            # provider-created quoted thread.
-            build_tran_outlook_body(resolutions, body_intro, "", "text")
+            # any draft. Company mode later adds Outlook's provider-created
+            # quote; personal forwarding mode deliberately creates a standalone
+            # copy-only draft with no recipients.
+            standalone_body = build_tran_outlook_body(
+                resolutions,
+                body_intro,
+                "",
+                "text",
+            )
+            if personal_forwarding:
+                standalone_subject = self._standalone_subject(original_eml)
+                message_id = None
+            else:
+                message_id = extract_source_message_id(original_eml)
+                standalone_subject = None
         except TranMailError as exc:
-            raise M365ProviderError(
-                "Retained source email does not have one usable Message-ID"
-            ) from exc
+            raise M365ProviderError("Retained source email headers are invalid") from exc
 
         graph = self._connections.graph_client(session_id, "tran")
         created_id: str | None = None
         create_attempted = False
         try:
+            if personal_forwarding:
+                assert standalone_subject is not None
+                create_attempted = True
+                created = graph.create_message_draft(
+                    standalone_subject,
+                    standalone_body,
+                )
+                created_id = created.id
+                graph.attach_workbook(created.id, workbook)
+                return M365OutlookDraftResult(
+                    subject=created.subject,
+                    web_url=created.web_link,
+                    mode="standalone",
+                )
+
+            assert message_id is not None
             source_id = graph.find_message_by_internet_id(message_id)
             create_attempted = True
             created = graph.create_reply_all_draft(source_id)
@@ -284,6 +337,7 @@ class M365OutlookDraftService:
             return M365OutlookDraftResult(
                 subject=updated.subject or created.subject,
                 web_url=updated.web_link or created.web_link,
+                mode="reply_all",
             )
         except M365GraphDraftUncertain as exc:
             self._rollback_or_raise(
@@ -311,6 +365,22 @@ class M365OutlookDraftService:
                 uncertain_if_missing=create_attempted,
             )
         raise AssertionError("Unreachable Outlook draft state")
+
+    @staticmethod
+    def _standalone_subject(original_eml: bytes) -> str:
+        if not original_eml:
+            raise TranMailError("Source email is required")
+        try:
+            headers = BytesHeaderParser(policy=policy.default).parsebytes(original_eml)
+        except Exception as exc:
+            raise TranMailError("Source email headers are invalid") from exc
+        values = headers.get_all("Subject", [])
+        raw = str(values[0]).strip() if len(values) == 1 else ""
+        normalized = " ".join(raw.split())
+        if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+            raise TranMailError("Source email Subject is invalid")
+        subject = f"DRAFT - Re: {normalized or 'Tran compensation review'}"
+        return subject[:998]
 
     @staticmethod
     def _rollback_or_raise(

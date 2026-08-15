@@ -49,10 +49,70 @@ except ImportError:  # pragma: no cover - exercised by the downloaded script
 
 DEFAULT_SERVER_URL = "__ASSET_HUB_ORIGIN__"
 TIMER_MS = 5 * 60 * 1_000
+MAX_BULK_DRAFTS = 20
 MAX_FOLDER_ITEMS_INSPECTED = 500
 OL_MAIL_ITEM = 43
 PR_TRANSPORT_HEADERS_UNICODE = "http://schemas.microsoft.com/mapi/proptag/0x007D001F"
 PR_TRANSPORT_HEADERS_ANSI = "http://schemas.microsoft.com/mapi/proptag/0x007D001E"
+_BASE_WINDOWS_DPI = 96.0
+_POINTS_PER_INCH = 72.0
+
+
+def _enable_windows_dpi_awareness() -> None:
+    """Stop Windows from bitmap-scaling the Tk window on high-DPI displays."""
+
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        try:
+            set_context = user32.SetProcessDpiAwarenessContext
+            set_context.argtypes = (ctypes.c_void_p,)
+            set_context.restype = ctypes.c_bool
+            # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is the pseudo-handle -4.
+            if set_context(ctypes.c_void_p(-4)):
+                return
+        except (AttributeError, OSError, ValueError):
+            pass
+
+        try:
+            set_awareness = ctypes.windll.shcore.SetProcessDpiAwareness
+            set_awareness.argtypes = (ctypes.c_int,)
+            set_awareness.restype = ctypes.c_long
+            if set_awareness(2) == 0:  # PROCESS_PER_MONITOR_DPI_AWARE
+                return
+        except (AttributeError, OSError, ValueError):
+            pass
+
+        with suppress(AttributeError, OSError, ValueError):
+            user32.SetProcessDPIAware()
+    except (AttributeError, ImportError, OSError):
+        # A clear fallback window is preferable, but DPI setup must never stop
+        # operators from reaching Outlook on an older Windows build.
+        return
+
+
+def _configure_tk_dpi(root: tk.Tk) -> float:
+    """Configure point rendering and return the initial monitor scale factor."""
+
+    dpi = float(root.winfo_fpixels("1i"))
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            get_dpi = ctypes.windll.user32.GetDpiForWindow
+            get_dpi.argtypes = (ctypes.c_void_p,)
+            get_dpi.restype = ctypes.c_uint
+            window_dpi = int(get_dpi(ctypes.c_void_p(root.winfo_id())))
+            if window_dpi > 0:
+                dpi = float(window_dpi)
+        except (AttributeError, ImportError, OSError, ValueError):
+            pass
+    dpi = min(max(dpi, _BASE_WINDOWS_DPI), _BASE_WINDOWS_DPI * 3)
+    root.tk.call("tk", "scaling", dpi / _POINTS_PER_INCH)
+    return dpi / _BASE_WINDOWS_DPI
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,11 +281,12 @@ def _outlook_datetime(value: object) -> datetime:
 
 
 class BridgeGui:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, *, ui_scale: float = 1.0) -> None:
         self.root = root
+        self.ui_scale = min(max(float(ui_scale), 1.0), 3.0)
         self.root.title("Cầu nối Outlook - Asset Compensation Hub")
-        self.root.geometry("940x760")
-        self.root.minsize(820, 650)
+        self.root.geometry(f"{self._px(940)}x{self._px(760)}")
+        self.root.minsize(self._px(820), self._px(650))
         self.states = {role: RoleState(role) for role in ("ngan", "tran")}
         self._busy = False
         self._active_origin = ""
@@ -238,8 +299,11 @@ class BridgeGui:
         self._build()
         self.root.after(TIMER_MS, self._timer_tick)
 
+    def _px(self, value: int) -> int:
+        return max(1, round(value * self.ui_scale))
+
     def _build(self) -> None:
-        outer = ttk.Frame(self.root, padding=16)
+        outer = ttk.Frame(self.root, padding=self._px(16))
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, text="Cầu nối Outlook", font=("Segoe UI", 18, "bold")).pack(anchor="w")
         ttk.Label(
@@ -248,14 +312,14 @@ class BridgeGui:
                 "Hãy tưởng tượng đây là một chiếc cầu: Outlook đưa mail qua cầu vào Product. "
                 "Product làm draft rồi chiếc cầu mở đúng cửa sổ Trả lời tất cả."
             ),
-            wraplength=880,
-        ).pack(anchor="w", pady=(4, 12))
+            wraplength=self._px(880),
+        ).pack(anchor="w", pady=(self._px(4), self._px(12)))
 
         server_row = ttk.Frame(outer)
-        server_row.pack(fill="x", pady=(0, 10))
+        server_row.pack(fill="x", pady=(0, self._px(10)))
         ttk.Label(server_row, text="1. Địa chỉ Product:").pack(side="left")
         ttk.Entry(server_row, textvariable=self.server_var, state="readonly").pack(
-            side="left", fill="x", expand=True, padx=(8, 0)
+            side="left", fill="x", expand=True, padx=(self._px(8), 0)
         )
 
         roles = ttk.Frame(outer)
@@ -266,7 +330,7 @@ class BridgeGui:
         self._build_role(roles, "tran", "TranNNB", 1)
 
         timer_row = ttk.Frame(outer)
-        timer_row.pack(fill="x", pady=(12, 8))
+        timer_row.pack(fill="x", pady=(self._px(12), self._px(8)))
         ttk.Checkbutton(
             timer_row,
             text="Tự kiểm tra mail mới mỗi 5 phút (mặc định TẮT)",
@@ -275,29 +339,43 @@ class BridgeGui:
         ).pack(side="left")
         ttk.Label(timer_row, text="Không đọc, không chuyển, không xóa mail.").pack(side="right")
 
-        draft = ttk.LabelFrame(outer, text="Draft đang chờ", padding=10)
-        draft.pack(fill="both", expand=True, pady=(4, 8))
+        draft = ttk.LabelFrame(outer, text="Draft đang chờ", padding=self._px(10))
+        draft.pack(fill="both", expand=True, pady=(self._px(4), self._px(8)))
         self.package_tree = ttk.Treeview(
-            draft, columns=("role", "subject", "match"), show="headings", height=7
+            draft,
+            columns=("role", "subject", "match"),
+            show="headings",
+            height=7,
+            selectmode="extended",
         )
         self.package_tree.heading("role", text="Phần")
         self.package_tree.heading("subject", text="Draft")
         self.package_tree.heading("match", text="Mail gốc")
-        self.package_tree.column("role", width=90, stretch=False)
-        self.package_tree.column("subject", width=560)
-        self.package_tree.column("match", width=120, stretch=False)
+        self.package_tree.column("role", width=self._px(90), stretch=False)
+        self.package_tree.column("subject", width=self._px(560))
+        self.package_tree.column("match", width=self._px(120), stretch=False)
         self.package_tree.pack(fill="both", expand=True)
         action_row = ttk.Frame(draft)
-        action_row.pack(fill="x", pady=(8, 0))
+        action_row.pack(fill="x", pady=(self._px(8), 0))
         check_button = ttk.Button(
             action_row, text="Kiểm tra draft mới", command=self._refresh_packages
         )
         check_button.pack(side="left")
-        open_button = ttk.Button(
-            action_row, text="Mở Trả lời tất cả", command=self._open_selected_package
+        select_button = ttk.Button(
+            action_row, text="Chọn tất cả", command=self._select_all_packages
         )
-        open_button.pack(side="left", padx=(8, 0))
-        self._buttons.extend((check_button, open_button))
+        select_button.pack(side="left", padx=(self._px(8), 0))
+        open_button = ttk.Button(
+            action_row,
+            text="Mở các draft đã chọn",
+            command=self._open_selected_package,
+        )
+        open_button.pack(side="left", padx=(self._px(8), 0))
+        ttk.Label(
+            action_row,
+            text="Ctrl/Shift để chọn nhiều · tối đa 20/lần",
+        ).pack(side="left", padx=(self._px(10), 0))
+        self._buttons.extend((check_button, select_button, open_button))
 
         ttk.Label(outer, text="Nhật ký dễ đọc:", font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.log = ScrolledText(outer, height=7, state="disabled", wrap="word")
@@ -305,24 +383,35 @@ class BridgeGui:
         self._write_log("Sẵn sàng. Bắt đầu ở ô mã Ngan hoặc Tran.")
 
     def _build_role(self, parent: ttk.Frame, role: Role, title: str, column: int) -> None:
-        frame = ttk.LabelFrame(parent, text=title, padding=12)
-        frame.grid(row=0, column=column, sticky="nsew", padx=(0, 6) if column == 0 else (6, 0))
+        frame = ttk.LabelFrame(parent, text=title, padding=self._px(12))
+        frame.grid(
+            row=0,
+            column=column,
+            sticky="nsew",
+            padx=(0, self._px(6)) if column == 0 else (self._px(6), 0),
+        )
         ttk.Label(
-            frame, text="2. Lấy mã ở Product, rồi dán vào đây:", wraplength=390
+            frame,
+            text="2. Lấy mã ở Product, rồi dán vào đây:",
+            wraplength=self._px(390),
         ).pack(anchor="w")
         pair_row = ttk.Frame(frame)
-        pair_row.pack(fill="x", pady=(5, 3))
+        pair_row.pack(fill="x", pady=(self._px(5), self._px(3)))
         ttk.Entry(pair_row, textvariable=self.code_vars[role], show="•").pack(
             side="left", fill="x", expand=True
         )
         pair_button = ttk.Button(pair_row, text="Kết nối", command=lambda: self._pair(role))
-        pair_button.pack(side="left", padx=(7, 0))
+        pair_button.pack(side="left", padx=(self._px(7), 0))
         self._buttons.append(pair_button)
         ttk.Label(frame, textvariable=self.pair_vars[role]).pack(anchor="w")
-        ttk.Separator(frame).pack(fill="x", pady=9)
+        ttk.Separator(frame).pack(fill="x", pady=self._px(9))
         ttk.Label(frame, text="3. Chọn đúng một thư mục Outlook:").pack(anchor="w")
-        ttk.Label(frame, textvariable=self.folder_vars[role], wraplength=390).pack(
-            anchor="w", pady=3
+        ttk.Label(
+            frame,
+            textvariable=self.folder_vars[role],
+            wraplength=self._px(390),
+        ).pack(
+            anchor="w", pady=self._px(3)
         )
         folder_button = ttk.Button(
             frame, text="Chọn thư mục", command=lambda: self._choose_folder(role)
@@ -331,7 +420,7 @@ class BridgeGui:
         scan_button = ttk.Button(
             frame, text="4. Nạp mail mới", command=lambda: self._scan_one(role)
         )
-        scan_button.pack(anchor="w", pady=(8, 0))
+        scan_button.pack(anchor="w", pady=(self._px(8), 0))
         self._buttons.extend((folder_button, scan_button))
 
     def _pair(self, role: Role) -> None:
@@ -495,69 +584,124 @@ class BridgeGui:
 
         self._run_async("Kiểm tra draft", work, done)
 
-    def _open_selected_package(self) -> None:
-        selected = self.package_tree.selection()
-        if len(selected) != 1 or ":" not in selected[0]:
-            messagebox.showinfo("Chọn một draft", "Hãy bấm chọn một dòng draft trước.")
+    def _select_all_packages(self) -> None:
+        items = tuple(self.package_tree.get_children())[:MAX_BULK_DRAFTS]
+        if not items:
+            messagebox.showinfo("Chưa có draft", "Hãy bấm Kiểm tra draft mới trước.")
             return
-        role_raw, package_id = selected[0].split(":", 1)
-        if role_raw not in self.states:
-            return
-        role: Role = role_raw  # type: ignore[assignment]
+        self.package_tree.selection_set(items)
 
-        def work() -> tuple[str, bool]:
-            state = self.states[role]
-            if state.client is None:
-                raise BridgeError("Phiên kết nối đã mất. Hãy lấy mã mới.")
-            package = state.client.get_draft_package(package_id)
-            source = match_package_source(
-                package, state.sources, role, state.ambiguous_handles
+    def _open_selected_package(self) -> None:
+        selected = tuple(self.package_tree.selection())
+        if not selected:
+            messagebox.showinfo("Chọn draft", "Hãy chọn ít nhất một dòng draft trước.")
+            return
+        if len(selected) > MAX_BULK_DRAFTS:
+            messagebox.showwarning(
+                "Chọn quá nhiều",
+                f"Mỗi lần chỉ mở tối đa {MAX_BULK_DRAFTS} draft. Hãy chia thành nhiều lượt.",
             )
-            body_html = sanitize_reply_html(package.body_html)
-            workbook_name = ""
-            workbook_bytes = b""
-            if package.workbook_content_base64:
-                workbook_name, workbook_bytes = decode_workbook(
-                    package.workbook_filename, package.workbook_content_base64
-                )
-            adapter = OutlookAdapter()
-            try:
-                adapter.open_reply(
-                    source,
-                    body_html=body_html,
-                    workbook_filename=workbook_name,
-                    workbook_bytes=workbook_bytes,
-                )
-            finally:
-                adapter.close()
-            # Opening the native Reply-All window is the irreversible local
-            # outcome.  Suppress this package immediately even if the later
-            # acknowledgement request fails, otherwise a retry could create a
-            # second unsent reply for the same source mail.
-            state.opened_package_ids.add(package_id)
-            acknowledged = True
-            try:
-                state.client.acknowledge_draft(package_id)
-            except BridgeError:
-                acknowledged = False
-            return package.subject, acknowledged
+            return
+
+        requests: list[tuple[str, Role, str]] = []
+        for item_id in selected:
+            if ":" not in item_id:
+                continue
+            role_raw, package_id = item_id.split(":", 1)
+            if role_raw in self.states:
+                requests.append((item_id, role_raw, package_id))  # type: ignore[arg-type]
+        if not requests:
+            messagebox.showwarning("Draft không hợp lệ", "Không có dòng draft hợp lệ để mở.")
+            return
+
+        def work() -> list[tuple[str, Role, str, bool, str]]:
+            outcomes: list[tuple[str, Role, str, bool, str]] = []
+            for item_id, role, package_id in requests:
+                state = self.states[role]
+                subject = package_id
+                try:
+                    if state.client is None:
+                        raise BridgeError("Phiên kết nối đã mất. Hãy lấy mã mới.")
+                    package = state.client.get_draft_package(package_id)
+                    subject = package.subject
+                    source = match_package_source(
+                        package, state.sources, role, state.ambiguous_handles
+                    )
+                    body_html = sanitize_reply_html(package.body_html)
+                    workbook_name = ""
+                    workbook_bytes = b""
+                    if package.workbook_content_base64:
+                        workbook_name, workbook_bytes = decode_workbook(
+                            package.workbook_filename, package.workbook_content_base64
+                        )
+                    adapter = OutlookAdapter()
+                    try:
+                        adapter.open_reply(
+                            source,
+                            body_html=body_html,
+                            workbook_filename=workbook_name,
+                            workbook_bytes=workbook_bytes,
+                        )
+                    finally:
+                        adapter.close()
+                    # Opening the native Reply-All window is irreversible.
+                    # Suppress it immediately even if acknowledgement fails.
+                    state.opened_package_ids.add(package_id)
+                    acknowledged = True
+                    try:
+                        state.client.acknowledge_draft(package_id)
+                    except BridgeError:
+                        acknowledged = False
+                    outcomes.append((item_id, role, subject, acknowledged, ""))
+                except BridgeError as exc:
+                    outcomes.append((item_id, role, subject, False, str(exc)))
+                except Exception:
+                    outcomes.append(
+                        (
+                            item_id,
+                            role,
+                            subject,
+                            False,
+                            "Classic Outlook không mở được draft này.",
+                        )
+                    )
+            return outcomes
 
         def done(result: object) -> None:
-            subject, acknowledged = result  # type: ignore[misc]
-            self.states[role].packages.pop(package_id, None)
-            if self.package_tree.exists(selected[0]):
-                self.package_tree.delete(selected[0])
-            if acknowledged:
-                self._write_log(
-                    f"Đã mở draft “{subject}” trên đúng mail gốc. Hãy đọc kỹ rồi tự bấm Gửi."
-                )
-            else:
-                self._write_log(
-                    "Draft đã mở an toàn, nhưng Product chưa ghi nhận. "
-                    "Không mở lại dòng này; hãy dùng cửa sổ Reply-All đang có."
+            outcomes = result if isinstance(result, list) else []
+            opened = 0
+            failed: list[str] = []
+            for item_id, role, subject, acknowledged, error in outcomes:
+                if error:
+                    failed.append(f"{subject}: {error}")
+                    self._write_log(f"Không mở được draft “{subject}”: {error}")
+                    continue
+                opened += 1
+                _, package_id = item_id.split(":", 1)
+                self.states[role].packages.pop(package_id, None)
+                if self.package_tree.exists(item_id):
+                    self.package_tree.delete(item_id)
+                if acknowledged:
+                    self._write_log(
+                        f"Đã mở draft “{subject}” trên đúng mail gốc. "
+                        "Hãy đọc kỹ rồi tự bấm Gửi."
+                    )
+                else:
+                    self._write_log(
+                        f"Draft “{subject}” đã mở an toàn, nhưng Product chưa ghi nhận. "
+                        "Không mở lại; hãy dùng cửa sổ Reply-All đang có."
+                    )
+            if opened:
+                self._write_log(f"Đã mở {opened} draft đã chọn; không có thao tác tự gửi.")
+            if failed:
+                preview = "\n".join(failed[:5])
+                suffix = f"\n… và {len(failed) - 5} draft khác." if len(failed) > 5 else ""
+                messagebox.showwarning(
+                    "Có draft chưa mở được",
+                    f"Đã mở {opened}; chưa mở được {len(failed)}.\n\n{preview}{suffix}",
                 )
 
-        self._run_async("Mở draft", work, done)
+        self._run_async(f"Mở {len(requests)} draft", work, done)
 
     def _auto_changed(self) -> None:
         if self.auto_var.get():
@@ -656,10 +800,12 @@ def _role_label(role: Role) -> str:
 def main() -> None:
     if os.name != "nt":
         raise SystemExit("Local Bridge chỉ chạy trên Windows với Classic Outlook.")
+    _enable_windows_dpi_awareness()
     root = tk.Tk()
+    ui_scale = _configure_tk_dpi(root)
     with suppress(tk.TclError):
         ttk.Style().theme_use("vista")
-    BridgeGui(root)
+    BridgeGui(root, ui_scale=ui_scale)
     root.mainloop()
 
 

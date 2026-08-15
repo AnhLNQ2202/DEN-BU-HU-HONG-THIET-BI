@@ -60,7 +60,9 @@ Nếu bạn đang làm NGAN:
 Nếu bạn đang làm TRAN:
 10. Khi Product đã tạo draft, quay lại Local Bridge.
 11. Bấm “Kiểm tra draft mới”.
-12. Chọn một dòng, rồi bấm “Mở Trả lời tất cả”.
+12. Chọn một hoặc nhiều dòng (Ctrl/Shift), hoặc bấm “Chọn tất cả”.
+13. Bấm “Mở các draft đã chọn”. Bridge mở tối đa 20 cửa sổ Reply-All mỗi lượt.
+    Mỗi cửa sổ vẫn là một draft riêng trên đúng mail nguồn; Bridge không tự gửi.
 13. Outlook mở đúng mail gốc, chèn nội dung và workbook.
 14. ĐỌC LẠI. Nếu đúng, chính bạn bấm Gửi.
 

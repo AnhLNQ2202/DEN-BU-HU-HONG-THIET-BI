@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import date
+from email import policy
 from email.message import EmailMessage
+from email.parser import BytesParser
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -83,6 +85,36 @@ def _eml() -> bytes:
     return message.as_bytes()
 
 
+def _forwarded_as_attachment(*, extra_attachment: bool = False) -> bytes:
+    original = BytesParser(policy=policy.default).parsebytes(_eml())
+    wrapper = EmailMessage()
+    wrapper["From"] = "Forwarder <forwarder@outlook.test>"
+    wrapper["To"] = "Forwarding inbox <inbox@outlook.test>"
+    wrapper["Subject"] = "Fwd: Synthetic source"
+    wrapper.set_content("Forwarded original email is attached.")
+    wrapper.add_attachment(original, filename="Synthetic source.eml")
+    if extra_attachment:
+        wrapper.add_attachment(
+            b"not allowed",
+            maintype="application",
+            subtype="pdf",
+            filename="unexpected.pdf",
+        )
+    return wrapper.as_bytes()
+
+
+def _forwarded_with_two_messages() -> bytes:
+    original = BytesParser(policy=policy.default).parsebytes(_eml())
+    wrapper = EmailMessage()
+    wrapper["From"] = "Forwarder <forwarder@outlook.test>"
+    wrapper["To"] = "Forwarding inbox <inbox@outlook.test>"
+    wrapper["Subject"] = "Fwd: two messages"
+    wrapper.set_content("Two attached messages are ambiguous.")
+    wrapper.add_attachment(original, filename="one.eml")
+    wrapper.add_attachment(original, filename="two.eml")
+    return wrapper.as_bytes()
+
+
 class _DraftGraph:
     def __init__(
         self,
@@ -93,6 +125,8 @@ class _DraftGraph:
         self.fail_at = fail_at
         self.rollback_fails = rollback_fails
         self.message_id: str | None = None
+        self.standalone_subject: str | None = None
+        self.standalone_html: str | None = None
         self.updated_html: str | None = None
         self.attachment: Path | None = None
         self.deleted: list[str] = []
@@ -124,6 +158,20 @@ class _DraftGraph:
             web_link="https://outlook.office.com/mail/deeplink/draft/one",
         )
 
+    def create_message_draft(self, subject: str, html: str) -> GraphDraft:
+        if self.fail_at == "invalid-response":
+            raise M365GraphDraftUncertain("provider invalid response", draft_id="draft-id")
+        self._fail("create")
+        self.standalone_subject = subject
+        self.standalone_html = html
+        return GraphDraft(
+            id="draft-id",
+            subject=subject,
+            body_content_type="html",
+            body_content=html,
+            web_link="https://outlook.cloud.microsoft/mail/deeplink/draft/personal",
+        )
+
     def update_draft_html(self, draft_id: str, html: str) -> GraphDraft:
         assert draft_id == "draft-id"
         self._fail("patch")
@@ -148,8 +196,9 @@ class _DraftGraph:
 
 
 class _DraftConnections:
-    def __init__(self, graph: _DraftGraph) -> None:
+    def __init__(self, graph: _DraftGraph, *, personal: bool = False) -> None:
         self.graph = graph
+        self.personal_forwarding_inbox = personal
         self.invalidated: list[tuple[str | None, str]] = []
 
     def graph_client(self, session_id: str | None, role: object) -> _DraftGraph:
@@ -186,6 +235,40 @@ def test_outlook_draft_prepends_escaped_intro_exact_table_and_attachment(
     assert graph.attachment == workbook
     assert graph.deleted == []
     assert result.web_url == "https://outlook.office.com/mail/deeplink/draft/two"
+    assert result.mode == "reply_all"
+
+
+def test_personal_forwarding_inbox_creates_standalone_unsent_copy_draft(
+    tmp_path: Path,
+) -> None:
+    graph = _DraftGraph()
+    service = M365OutlookDraftService(  # type: ignore[arg-type]
+        _DraftConnections(graph, personal=True)
+    )
+    workbook = tmp_path / "result.xlsx"
+    workbook.write_bytes(b"synthetic workbook")
+    resolution = _resolution("Laptop <approved>")
+
+    result = service.create(
+        "browser-session",
+        original_eml=_eml(),
+        resolutions=[resolution],
+        workbook_path=workbook,
+        body_intro="Dear team, <review>\nApproved",
+    )
+
+    assert graph.message_id is None
+    assert graph.updated_html is None
+    assert graph.standalone_subject == "DRAFT - Re: Synthetic source"
+    assert graph.standalone_html is not None
+    assert "Dear team, &lt;review&gt;<br>Approved" in graph.standalone_html
+    assert build_tran_mail_table([resolution]) in graph.standalone_html
+    assert graph.attachment == workbook
+    assert graph.deleted == []
+    assert result.mode == "standalone"
+    assert result.web_url == (
+        "https://outlook.cloud.microsoft/mail/deeplink/draft/personal"
+    )
 
 
 @pytest.mark.parametrize("content_type", ["html", "text"])
@@ -346,7 +429,7 @@ class _SyncConnections:
 
     def collect_sync_batch(self, session_id: str | None, role: object) -> M365RawSyncBatch:
         assert session_id == "browser-session"
-        assert role == "ngan"
+        assert role == self.batch.role
         return self.batch
 
     def commit_sync_cursor(self, session_id: str | None, batch: M365RawSyncBatch) -> None:
@@ -366,7 +449,7 @@ def test_manual_sync_uses_existing_validator_ingestion_and_commits_cursor(
 
     def ingest(case_service: Any, payloads: tuple[Any, ...], **kwargs: Any) -> Any:
         assert case_service is cases
-        assert payloads[0].filename == "m365-ngan-01.eml"
+        assert payloads[0].filename == "Synthetic_source.eml"
         assert kwargs["supplier_directory"] == {"demo": "supplier"}
         digest = hashlib.sha256(payloads[0].data).hexdigest()
         case = SimpleNamespace(
@@ -399,6 +482,108 @@ def test_manual_sync_uses_existing_validator_ingestion_and_commits_cursor(
     assert result.warnings == ("synthetic warning",)
     assert connections.committed is True
     assert artifacts.deleted == []
+
+
+def test_forwarded_as_attachment_ingests_only_the_original_inner_eml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connections = _SyncConnections()
+    connections.batch = M365RawSyncBatch(
+        role="tran",
+        folder=connections.batch.folder,
+        messages=(M365RawMessage("m365-tran-01.eml", _forwarded_as_attachment()),),
+        base_cursor=None,
+        next_cursor=connections.batch.next_cursor,
+        has_more=False,
+        cursor_ready=True,
+    )
+    cases = _Cases()
+    artifacts = _ArtifactStore()
+    captured: list[Any] = []
+
+    def ingest(case_service: Any, payloads: tuple[Any, ...], **kwargs: Any) -> Any:
+        del kwargs
+        assert case_service is cases
+        captured.extend(payloads)
+        parsed = BytesParser(policy=policy.default).parsebytes(payloads[0].data)
+        assert str(parsed["Subject"]) == "Synthetic source"
+        assert str(parsed["Message-ID"]) == "<exact-source@example.test>"
+        assert payloads[0].filename == "Synthetic_source.eml"
+        digest = hashlib.sha256(payloads[0].data).hexdigest()
+        case = SimpleNamespace(
+            id="LOST-202601-FORWARDED",
+            metadata={"mail_artifact_handle": f"eml-sha256-{digest}"},
+        )
+        cases.live = [case]
+        return IngestionReport((case,), (), (), ())
+
+    monkeypatch.setattr(mail_module, "ingest_eml_payloads", ingest)
+    service = M365MailSyncService(
+        connections,  # type: ignore[arg-type]
+        EmailUploadService(),
+        cases,
+        artifacts,  # type: ignore[arg-type]
+        retain_raw_eml=True,
+    )
+
+    result = service.sync(
+        "browser-session",
+        "tran",
+        supplier_directory=None,
+        ambiguous_supplier_domains=frozenset(),
+    )
+
+    assert len(captured) == 1
+    assert result.ingested == 1
+    assert result.invalid_mime_count == 0
+    assert result.case_ids == ("LOST-202601-FORWARDED",)
+    assert connections.committed is True
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        _forwarded_as_attachment(extra_attachment=True),
+        _forwarded_with_two_messages(),
+    ],
+)
+def test_forwarding_wrapper_rejects_extra_or_ambiguous_attachments(
+    monkeypatch: pytest.MonkeyPatch,
+    wrapper: bytes,
+) -> None:
+    connections = _SyncConnections()
+    connections.batch = M365RawSyncBatch(
+        role="tran",
+        folder=connections.batch.folder,
+        messages=(M365RawMessage("m365-tran-01.eml", wrapper),),
+        base_cursor=None,
+        next_cursor=connections.batch.next_cursor,
+        has_more=False,
+        cursor_ready=True,
+    )
+    monkeypatch.setattr(
+        mail_module,
+        "ingest_eml_payloads",
+        lambda *args, **kwargs: IngestionReport((), (), (), ()),
+    )
+    service = M365MailSyncService(
+        connections,  # type: ignore[arg-type]
+        EmailUploadService(),
+        _Cases(),
+        _ArtifactStore(),  # type: ignore[arg-type]
+        retain_raw_eml=False,
+    )
+
+    result = service.sync(
+        "browser-session",
+        "tran",
+        supplier_directory=None,
+        ambiguous_supplier_domains=frozenset(),
+    )
+
+    assert result.invalid_mime_count == 1
+    assert result.ingested == 0
+    assert connections.committed is True
 
 
 def test_sync_rolls_back_only_before_persistence_not_after_cursor_failure(

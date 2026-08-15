@@ -4,6 +4,7 @@ import { dashboardApi } from "../api.js";
 import { translate } from "../i18n.js";
 import { formatCurrency } from "../utils.js";
 import { resolveLostDate } from "../workflowContracts.js";
+import { useToast } from "./Feedback.jsx";
 import { EmailUploadPanel } from "./UploadWorkspace.jsx";
 
 const MAX_REFERENCE_BYTES = 50 * 1024 * 1024;
@@ -317,13 +318,13 @@ export function TranWorkspace({
   const [referencePhase, setReferencePhase] = useState("");
   const [referenceScanSeconds, setReferenceScanSeconds] = useState(0);
   const [referenceError, setReferenceError] = useState("");
-  const [referenceNotice, setReferenceNotice] = useState("");
   const [faFile, setFaFile] = useState(null);
   const [ccdcFile, setCcdcFile] = useState(null);
   const [clearCcdc, setClearCcdc] = useState(false);
   const [resolution, setResolution] = useState(null);
   const [busyAction, setBusyAction] = useState("");
   const [actionError, setActionError] = useState("");
+  const pushToast = useToast();
   const [workbookResult, setWorkbookResult] = useState(null);
   const [draftResult, setDraftResult] = useState(null);
   const [outlookDraftResult, setOutlookDraftResult] = useState(null);
@@ -370,7 +371,6 @@ export function TranWorkspace({
     setCcdcFile(null);
     setClearCcdc(false);
     setReferenceError("");
-    setReferenceNotice("");
     setReferenceProgress(null);
     setReferencePhase("");
     setReferenceScanSeconds(0);
@@ -530,7 +530,6 @@ export function TranWorkspace({
     setReferencePhase("uploading");
     setReferenceScanSeconds(0);
     setReferenceError("");
-    setReferenceNotice("");
     try {
       const response = await dashboardApi.uploadTranReferences(
         faFile,
@@ -546,7 +545,11 @@ export function TranWorkspace({
         },
       );
       setReferenceStatus(response.status);
-      setReferenceNotice(translate(language, "tranReferenceUploadSuccess"));
+      pushToast(
+        translate(language, "toastSuccessTitle"),
+        translate(language, "tranReferenceUploadSuccess"),
+        "success",
+      );
       setFaFile(null);
       setCcdcFile(null);
       setClearCcdc(false);
@@ -555,7 +558,9 @@ export function TranWorkspace({
       invalidateOutputs();
       await onReferencesChanged?.();
     } catch (error) {
-      if (error.name !== "AbortError") setReferenceError(error.message);
+      if (error.name !== "AbortError") {
+        pushToast(translate(language, "toastErrorTitle"), error.message, "error");
+      }
     } finally {
       if (!controller.signal.aborted) {
         setReferenceBusy(false);
@@ -585,14 +590,20 @@ export function TranWorkspace({
     setOutlookDraftResult(null);
     setCompanionDraftResult(null);
     try {
-      setResolution(await dashboardApi.resolveTranAssets(
+      const result = await dashboardApi.resolveTranAssets(
         buildTranAssetsPayload(forms, language),
         controller.signal,
-      ));
+      );
+      setResolution(result);
+      pushToast(
+        translate(language, "toastSuccessTitle"),
+        translate(language, "tranLookupReady"),
+        result.ready ? "success" : "warning",
+      );
     } catch (error) {
       if (error.name !== "AbortError") {
         setResolution(null);
-        setActionError(error.message);
+        pushToast(translate(language, "toastErrorTitle"), error.message, "error");
       }
     } finally {
       if (!controller.signal.aborted) setBusyAction("");
@@ -608,14 +619,22 @@ export function TranWorkspace({
     setActionError("");
     setWorkbookResult(null);
     try {
-      setWorkbookResult(await dashboardApi.exportTranWorkbook(
+      const result = await dashboardApi.exportTranWorkbook(
         buildTranAssetsPayload(forms, language),
         processingDate,
         yearSheet.trim(),
         controller.signal,
-      ));
+      );
+      setWorkbookResult(result);
+      pushToast(
+        translate(language, "toastSuccessTitle"),
+        translate(language, "tranWorkbookReady"),
+        "success",
+      );
     } catch (error) {
-      if (error.name !== "AbortError") setActionError(error.message);
+      if (error.name !== "AbortError") {
+        pushToast(translate(language, "toastErrorTitle"), error.message, "error");
+      }
     } finally {
       if (!controller.signal.aborted) setBusyAction("");
     }
@@ -636,7 +655,7 @@ export function TranWorkspace({
     setDraftResult(null);
     setCompanionDraftResult(null);
     try {
-      setDraftResult(await dashboardApi.createTranDraft(
+      const result = await dashboardApi.createTranDraft(
         buildTranAssetsPayload(forms, language),
         sourceBindings,
         sourceHandle,
@@ -644,9 +663,17 @@ export function TranWorkspace({
         processingDate,
         yearSheet.trim(),
         controller.signal,
-      ));
+      );
+      setDraftResult(result);
+      pushToast(
+        translate(language, "toastSuccessTitle"),
+        translate(language, "tranDraftReady"),
+        "success",
+      );
     } catch (error) {
-      if (error.name !== "AbortError") setActionError(error.message);
+      if (error.name !== "AbortError") {
+        pushToast(translate(language, "toastErrorTitle"), error.message, "error");
+      }
     } finally {
       if (!controller.signal.aborted) setBusyAction("");
     }
@@ -667,7 +694,7 @@ export function TranWorkspace({
     setOutlookDraftResult(null);
     setCompanionDraftResult(null);
     try {
-      setOutlookDraftResult(await dashboardApi.createTranOutlookDraft(
+      const result = await dashboardApi.createTranOutlookDraft(
         buildTranAssetsPayload(forms, language),
         sourceBindings,
         sourceHandle,
@@ -675,10 +702,16 @@ export function TranWorkspace({
         processingDate,
         yearSheet.trim(),
         controller.signal,
-      ));
+      );
+      setOutlookDraftResult(result);
+      pushToast(
+        translate(language, "toastSuccessTitle"),
+        translate(language, "tranOutlookDraftReady"),
+        "success",
+      );
     } catch (error) {
       if (error.name !== "AbortError") {
-        setActionError(error.message);
+        pushToast(translate(language, "toastErrorTitle"), error.message, "error");
         if (error.status === 401 || error.status === 503) {
           onOutlookMailboxInvalid?.();
           await Promise.resolve(onMailboxSynced?.()).catch(() => {});
@@ -705,7 +738,7 @@ export function TranWorkspace({
     setOutlookDraftResult(null);
     setCompanionDraftResult(null);
     try {
-      setCompanionDraftResult(await dashboardApi.createTranCompanionDraft(
+      const result = await dashboardApi.createTranCompanionDraft(
         buildTranAssetsPayload(forms, language),
         sourceBindings,
         sourceHandle,
@@ -713,9 +746,17 @@ export function TranWorkspace({
         processingDate,
         yearSheet.trim(),
         controller.signal,
-      ));
+      );
+      setCompanionDraftResult(result);
+      pushToast(
+        translate(language, "toastSuccessTitle"),
+        translate(language, "tranCompanionDraftReady"),
+        "success",
+      );
     } catch (error) {
-      if (error.name !== "AbortError") setActionError(error.message);
+      if (error.name !== "AbortError") {
+        pushToast(translate(language, "toastErrorTitle"), error.message, "error");
+      }
     } finally {
       if (!controller.signal.aborted) setBusyAction("");
     }
@@ -837,7 +878,6 @@ export function TranWorkspace({
           </form>
         ) : <div className="disabled-note">{translate(language, "tranReferenceUploadUnavailable")}</div>}
         {referenceError && <div className="inline-error" role="alert">{referenceError}</div>}
-        {referenceNotice && <div className="dialog-note" role="status"><p>{referenceNotice}</p></div>}
       </section>
 
       <section className="panel operation-panel compensation-panel">

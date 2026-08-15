@@ -1,4 +1,11 @@
-import React, { useEffect } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { Icon } from "./Icon.jsx";
 
@@ -24,7 +31,10 @@ export function FatalError({ message, onRetry }) {
 
 function Toast({ toast, onDismiss }) {
   useEffect(() => {
-    const timer = window.setTimeout(() => onDismiss(toast.id), toast.type === "error" ? 8000 : 5000);
+    const timer = window.setTimeout(
+      () => onDismiss(toast.id),
+      ["error", "warning"].includes(toast.type) ? 8000 : 5000,
+    );
     return () => window.clearTimeout(timer);
   }, [onDismiss, toast.id, toast.type]);
 
@@ -40,4 +50,36 @@ function Toast({ toast, onDismiss }) {
 
 export function ToastRegion({ toasts, onDismiss }) {
   return <div className="toast-region" aria-live="polite" aria-atomic="false">{toasts.map((toast) => <Toast key={toast.id} toast={toast} onDismiss={onDismiss} />)}</div>;
+}
+
+const ToastContext = createContext(null);
+
+export function ToastProvider({ children }) {
+  const [toasts, setToasts] = useState([]);
+  const nextId = useRef(0);
+
+  const dismissToast = useCallback((id) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+  const pushToast = useCallback((title, message, type = "info") => {
+    const id = ++nextId.current;
+    setToasts((current) => [
+      ...current,
+      { id, title, message, type },
+    ].slice(-4));
+    return id;
+  }, []);
+
+  return (
+    <ToastContext.Provider value={pushToast}>
+      {children}
+      <ToastRegion toasts={toasts} onDismiss={dismissToast} />
+    </ToastContext.Provider>
+  );
+}
+
+export function useToast() {
+  const pushToast = useContext(ToastContext);
+  if (!pushToast) throw new Error("useToast must be used inside ToastProvider");
+  return pushToast;
 }

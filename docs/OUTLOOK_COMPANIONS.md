@@ -157,8 +157,10 @@ vào hai folder đó. Nó không chui vào folder khác.
 9. Product phân tích EML và tạo case như bình thường.
 10. NganTLT tiếp tục review/hạch toán trên Product. Ngan không có gói Reply-All.
 11. TranNNB resolve dữ liệu và bấm **Đưa draft sang Add-in / Bridge**.
-12. Trong Bridge, bạn bấm **Kiểm tra draft mới**, chọn một dòng và bấm **Mở
-    Trả lời tất cả**.
+12. Trong Bridge, bạn bấm **Kiểm tra draft mới**, chọn một hay nhiều dòng bằng
+    Ctrl/Shift (hoặc **Chọn tất cả**) rồi bấm **Mở các draft đã chọn**. Bridge
+    mở tối đa 20 cửa sổ Reply-All mỗi lượt; mỗi draft vẫn gắn với đúng mail nguồn
+    của nó và không có thao tác tự gửi.
 13. Bridge tìm mail gốc bằng đúng `EntryID + StoreID`, gọi Outlook `ReplyAll()`,
     chèn nội dung, đính workbook, `Save()` rồi `Display()`.
 14. Bridge không có thao tác `Send()`. Bạn đọc lại và tự bấm **Send**.

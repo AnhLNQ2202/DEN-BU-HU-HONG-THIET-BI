@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { translate } from "../i18n.js";
 import { numberFormatter } from "../utils.js";
 import { classifySupplierFiles, hasExactSupplierRoles } from "../workflowContracts.js";
+import { useToast } from "./Feedback.jsx";
 
 const MIB = 1024 * 1024;
 const SUPPLIER_EXTENSIONS = new Set([".xls", ".xlsx", ".csv"]);
@@ -256,8 +257,8 @@ export function EmailUploadPanel({
   const [emailFiles, setEmailFiles] = useState([]);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailProgress, setEmailProgress] = useState(null);
-  const [emailError, setEmailError] = useState("");
   const [emailResult, setEmailResult] = useState(null);
+  const pushToast = useToast();
   const emailInputRef = useRef(null);
   const emailAbortRef = useRef(null);
   const selectedEmailError = useMemo(
@@ -277,14 +278,12 @@ export function EmailUploadPanel({
     setConfirmed(false);
     setEmailFiles([]);
     setEmailProgress(null);
-    setEmailError("");
     setEmailResult(null);
     if (emailInputRef.current) emailInputRef.current.value = "";
   }, [resetVersion]);
 
   function selectEmailFiles(event) {
     setEmailFiles(Array.from(event.target.files || []));
-    setEmailError("");
     setEmailResult(null);
   }
 
@@ -294,7 +293,7 @@ export function EmailUploadPanel({
       || (!emailFiles.length ? translate(language, "emailMissingFiles") : "")
       || (!confirmed ? translate(language, "uploadConfirmationRequired") : "");
     if (validationError) {
-      setEmailError(validationError);
+      pushToast(translate(language, "toastWarningTitle"), validationError, "warning");
       return;
     }
 
@@ -302,7 +301,6 @@ export function EmailUploadPanel({
     emailAbortRef.current = controller;
     setEmailBusy(true);
     setEmailProgress(0);
-    setEmailError("");
     setEmailResult(null);
     try {
       const result = await onEmailUpload({
@@ -315,8 +313,10 @@ export function EmailUploadPanel({
       if (emailInputRef.current) emailInputRef.current.value = "";
       onCompleted?.(result);
     } catch (error) {
-      setEmailError(
+      pushToast(
+        translate(language, error.name === "AbortError" ? "toastInfoTitle" : "toastErrorTitle"),
         error.name === "AbortError" ? translate(language, "uploadCancelled") : error.message,
+        error.name === "AbortError" ? "info" : "error",
       );
     } finally {
       emailAbortRef.current = null;
@@ -375,7 +375,6 @@ export function EmailUploadPanel({
           <SelectedFilesDisclosure files={emailFiles} language={language} />
         )}
         {selectedEmailError && <div id={errorId} className="inline-error" role="alert">{selectedEmailError}</div>}
-        {emailError && <div className="inline-error" role="alert">{emailError}</div>}
         {emailBusy && <UploadProgress language={language} percent={emailProgress} kind="email" />}
         <EmailResult language={language} result={emailResult} />
       </form>
@@ -398,13 +397,12 @@ export function UploadWorkspace({
   const [supplierFiles, setSupplierFiles] = useState([]);
   const [supplierBusy, setSupplierBusy] = useState(false);
   const [supplierProgress, setSupplierProgress] = useState(null);
-  const [supplierError, setSupplierError] = useState("");
   const [supplierResult, setSupplierResult] = useState(null);
   const [emailFiles, setEmailFiles] = useState([]);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailProgress, setEmailProgress] = useState(null);
-  const [emailError, setEmailError] = useState("");
   const [emailResult, setEmailResult] = useState(null);
+  const pushToast = useToast();
   const supplierInputRef = useRef(null);
   const emailInputRef = useRef(null);
   const supplierAbortRef = useRef(null);
@@ -420,11 +418,9 @@ export function UploadWorkspace({
     setConfirmed(false);
     setSupplierFiles([]);
     setSupplierProgress(null);
-    setSupplierError("");
     setSupplierResult(null);
     setEmailFiles([]);
     setEmailProgress(null);
-    setEmailError("");
     setEmailResult(null);
     if (supplierInputRef.current) supplierInputRef.current.value = "";
     if (emailInputRef.current) emailInputRef.current.value = "";
@@ -480,13 +476,11 @@ export function UploadWorkspace({
 
   function selectSupplierFiles(event) {
     setSupplierFiles(Array.from(event.target.files || []));
-    setSupplierError("");
     setSupplierResult(null);
   }
 
   function selectEmailFiles(event) {
     setEmailFiles(Array.from(event.target.files || []));
-    setEmailError("");
     setEmailResult(null);
   }
 
@@ -498,7 +492,7 @@ export function UploadWorkspace({
       || (!inactiveFile ? translate(language, "supplierMissingInactive") : "")
       || (!confirmed ? translate(language, "uploadConfirmationRequired") : "");
     if (validationError) {
-      setSupplierError(validationError);
+      pushToast(translate(language, "toastWarningTitle"), validationError, "warning");
       return;
     }
 
@@ -506,7 +500,6 @@ export function UploadWorkspace({
     supplierAbortRef.current = controller;
     setSupplierBusy(true);
     setSupplierProgress(0);
-    setSupplierError("");
     setSupplierResult(null);
     try {
       const result = await onSupplierUpload({
@@ -522,8 +515,10 @@ export function UploadWorkspace({
       setSupplierFiles([]);
       if (supplierInputRef.current) supplierInputRef.current.value = "";
     } catch (error) {
-      setSupplierError(
+      pushToast(
+        translate(language, error.name === "AbortError" ? "toastInfoTitle" : "toastErrorTitle"),
         error.name === "AbortError" ? translate(language, "uploadCancelled") : error.message,
+        error.name === "AbortError" ? "info" : "error",
       );
     } finally {
       supplierAbortRef.current = null;
@@ -538,7 +533,7 @@ export function UploadWorkspace({
       || (!emailFiles.length ? translate(language, "emailMissingFiles") : "")
       || (!confirmed ? translate(language, "uploadConfirmationRequired") : "");
     if (validationError) {
-      setEmailError(validationError);
+      pushToast(translate(language, "toastWarningTitle"), validationError, "warning");
       return;
     }
 
@@ -546,7 +541,6 @@ export function UploadWorkspace({
     emailAbortRef.current = controller;
     setEmailBusy(true);
     setEmailProgress(0);
-    setEmailError("");
     setEmailResult(null);
     try {
       const result = await onEmailUpload({
@@ -558,8 +552,10 @@ export function UploadWorkspace({
       setEmailFiles([]);
       if (emailInputRef.current) emailInputRef.current.value = "";
     } catch (error) {
-      setEmailError(
+      pushToast(
+        translate(language, error.name === "AbortError" ? "toastInfoTitle" : "toastErrorTitle"),
         error.name === "AbortError" ? translate(language, "uploadCancelled") : error.message,
+        error.name === "AbortError" ? "info" : "error",
       );
     } finally {
       emailAbortRef.current = null;
@@ -641,7 +637,6 @@ export function UploadWorkspace({
             {supplierPairError || supplierFileValidation}
           </div>
         )}
-        {supplierError && <div className="inline-error" role="alert">{supplierError}</div>}
         {supplierBusy && <UploadProgress language={language} percent={supplierProgress} kind="supplier" />}
         <div className="upload-actions">
           <button className="btn secondary" type="submit" disabled={!supplierReady}>
@@ -709,7 +704,6 @@ export function UploadWorkspace({
           <SelectedFilesDisclosure files={emailFiles} language={language} />
         )}
         {selectedEmailError && <div id="email-file-error" className="inline-error" role="alert">{selectedEmailError}</div>}
-        {emailError && <div className="inline-error" role="alert">{emailError}</div>}
         {emailBusy && <UploadProgress language={language} percent={emailProgress} kind="email" />}
         <EmailResult language={language} result={emailResult} />
       </form>

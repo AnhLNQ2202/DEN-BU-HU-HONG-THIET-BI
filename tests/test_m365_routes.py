@@ -29,6 +29,7 @@ from asset_compensation.web import create_app
 class _Connections:
     configured = True
     secure_cookie = True
+    outlook_drafts_supported = True
 
     def __init__(self) -> None:
         self.disconnected: list[tuple[str | None, str]] = []
@@ -165,6 +166,21 @@ def test_capabilities_fail_closed_when_any_m365_setting_is_missing(
         assert unavailable.status_code == 503
         assert unavailable.get_json()["capability_available"] is False
         assert unavailable.headers["Cache-Control"] == "private, no-store"
+    finally:
+        app.extensions["asset_hub"]["repository"].close()
+
+
+def test_personal_forwarding_mode_exposes_standalone_graph_draft_capability(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    _install_fakes(app)
+    client = app.test_client()
+    try:
+        capabilities = client.get("/api/capabilities").get_json()["capabilities"]
+        assert capabilities["m365_ngan"] is True
+        assert capabilities["m365_tran"] is True
+        assert capabilities["tran_outlook_draft"] is True
     finally:
         app.extensions["asset_hub"]["repository"].close()
 
@@ -524,6 +540,7 @@ def test_outlook_draft_route_returns_unsent_private_contract(
         assert payload["outlook_draft"] == {
             "subject": "Re: Synthetic",
             "web_url": "https://outlook.office.com/mail/deeplink/draft/one",
+            "mode": "reply_all",
         }
         assert payload["workbook_download_url"].startswith("/api/tran/workbooks/")
         assert response.headers["Cache-Control"] == "private, no-store"

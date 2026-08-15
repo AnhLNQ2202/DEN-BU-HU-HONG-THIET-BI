@@ -402,7 +402,8 @@ def _capabilities(settings: Any) -> dict[str, Any]:
     retention = bool(settings.retain_raw_eml)
     mail_pdf = bool(_extension("mail_pdf_available"))
     pypdf = bool(_extension("pypdf_available"))
-    m365_configured = bool(_extension("m365_connection_service").configured)
+    m365_connection = _extension("m365_connection_service")
+    m365_configured = bool(m365_connection.configured)
     return {
         "test_reset": settings.allow_test_reset,
         "demo_reset": settings.demo_mode,
@@ -422,7 +423,11 @@ def _capabilities(settings: Any) -> dict[str, Any]:
         "m365_configured": m365_configured,
         "m365_ngan": m365_configured,
         "m365_tran": m365_configured,
-        "tran_outlook_draft": bool(m365_configured and retention and template_available),
+        "tran_outlook_draft": bool(
+            m365_connection.outlook_drafts_supported
+            and retention
+            and template_available
+        ),
     }
 
 
@@ -1653,8 +1658,11 @@ def acknowledge_companion_draft_package(package_id: str) -> Any:
 @_serialized_mutation
 def create_tran_outlook_draft() -> Any:
     settings, _, service = _dependencies()
-    if not _extension("m365_connection_service").configured:
+    m365_connection = _extension("m365_connection_service")
+    if not m365_connection.configured:
         return _unavailable("Microsoft 365 integration is not configured")
+    if not m365_connection.outlook_drafts_supported:
+        return _unavailable("Outlook draft creation is unavailable")
     if not settings.retain_raw_eml:
         return _unavailable("Raw EML retention is disabled")
     data = _json_body()

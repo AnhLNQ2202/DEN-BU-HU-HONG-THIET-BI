@@ -4,7 +4,7 @@ import { dashboardApi } from "./api.js";
 import { BatchDialog } from "./components/BatchDialog.jsx";
 import { CaseDrawer } from "./components/CaseDrawer.jsx";
 import { CaseTable } from "./components/CaseTable.jsx";
-import { FatalError, LoadingState, ToastRegion } from "./components/Feedback.jsx";
+import { FatalError, LoadingState, useToast } from "./components/Feedback.jsx";
 import { Topbar } from "./components/Header.jsx";
 import { IconSprite } from "./components/Icon.jsx";
 import { KpiGrid } from "./components/KpiGrid.jsx";
@@ -82,19 +82,9 @@ export default function App() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [mailPdfBusyHandle, setMailPdfBusyHandle] = useState("");
   const [mailPdfDownloads, setMailPdfDownloads] = useState({});
-  const [toasts, setToasts] = useState([]);
   const requestId = useRef(0);
   const abortRef = useRef(null);
-  const toastId = useRef(0);
-
-  const pushToast = useCallback((title, message, type = "info") => {
-    const id = ++toastId.current;
-    setToasts((current) => [...current, { id, title, message, type }].slice(-4));
-  }, []);
-  const dismissToast = useCallback(
-    (id) => setToasts((current) => current.filter((toast) => toast.id !== id)),
-    [],
-  );
+  const pushToast = useToast();
 
   const loadDashboard = useCallback(async ({ initial = false, quiet = false } = {}) => {
     const currentRequest = ++requestId.current;
@@ -461,7 +451,6 @@ export default function App() {
         onClose={() => setBatchOpen(false)}
         onCreate={createBatch}
       />
-      <ToastRegion toasts={toasts} onDismiss={dismissToast} />
       <IconSprite />
     </>
   );
