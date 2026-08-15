@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import atexit
+import importlib.util
+import os
 import secrets
 from threading import RLock
 from typing import Any
 
 from flask import Flask, Response, jsonify, request
 
+from asset_compensation.adapters import PdfCapabilityError, WordPdfConverter
+from asset_compensation.adapters.pdf import WeasyPrintPdfConverter
 from asset_compensation.config import Settings
 from asset_compensation.demo import seed_demo
 from asset_compensation.domain import (
@@ -20,9 +24,27 @@ from asset_compensation.domain import (
     ValidationError,
 )
 from asset_compensation.repositories import SQLiteCaseRepository
-from asset_compensation.services import CaseService, CompensationService, TestDataService
+from asset_compensation.services import (
+    DAMAGED_NO_REPAIR_POLICY,
+    DAMAGED_REPAIR_POLICY,
+    LOST_DEPRECIATION_ASSET_POLICY,
+    LOST_DEPRECIATION_OTHER_POLICY,
+    LOST_FALLBACK_POLICY,
+    LOST_RESPONSIBILITY_POLICY,
+    PREPAYMENT_POLICY,
+    AccountingPolicyResolver,
+    CaseService,
+    CompensationService,
+    MailArtifactStore,
+    MailPdfService,
+    TestDataService,
+    TranWorkflowService,
+)
 from asset_compensation.services.email_upload_service import EmailUploadService
 from asset_compensation.services.supplier_upload_service import SupplierUploadService
+from asset_compensation.services.tran_reference_upload_service import (
+    TranReferenceUploadService,
+)
 
 from .routes import blueprint
 
@@ -39,21 +61,82 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.config.update(
         SECRET_KEY=settings.secret_key,
         JSON_SORT_KEYS=False,
-        # Supplier pairs allow 48 MiB of file bytes plus multipart framing.
-        MAX_CONTENT_LENGTH=52 * 1024 * 1024,
+        # Two 50 MiB Tran reference files plus multipart framing are the
+        # largest accepted request; every upload service enforces tighter
+        # per-file and aggregate limits before parsing.
+        MAX_CONTENT_LENGTH=106 * 1024 * 1024,
     )
 
     repository = SQLiteCaseRepository(settings.database_path)
     service = CaseService(repository)
     supplier_upload_service = SupplierUploadService(settings.reference_dir)
+    mail_artifact_store = MailArtifactStore(
+        settings.mail_artifact_dir,
+        enabled=settings.retain_raw_eml,
+    )
+    tran_reference_upload_service = TranReferenceUploadService(settings.reference_dir)
+    if settings.prepayment_gl is None and settings.damaged_debit_gl != settings.lost_debit_gl:
+        raise RuntimeError(
+            "Configure ASSET_HUB_PREPAYMENT_GL when DAMAGED and LOST debit accounts differ"
+        )
+    prepayment_gl = settings.prepayment_gl or settings.damaged_debit_gl
+    accounting_policy_resolver = AccountingPolicyResolver(
+        {
+            PREPAYMENT_POLICY: prepayment_gl,
+            DAMAGED_REPAIR_POLICY: (
+                settings.damaged_repair_credit_gl or settings.damaged_credit_gl
+            ),
+            DAMAGED_NO_REPAIR_POLICY: (
+                settings.damaged_no_repair_credit_gl or settings.damaged_credit_gl
+            ),
+            LOST_DEPRECIATION_ASSET_POLICY: (
+                settings.lost_depreciation_asset_gl_template or settings.lost_credit_gl
+            ),
+            LOST_DEPRECIATION_OTHER_POLICY: (
+                settings.lost_depreciation_other_gl_template or settings.lost_credit_gl
+            ),
+            LOST_RESPONSIBILITY_POLICY: (
+                settings.lost_responsibility_gl_template or settings.lost_credit_gl
+            ),
+            LOST_FALLBACK_POLICY: settings.lost_credit_gl,
+        }
+    )
+    pypdf_available = importlib.util.find_spec("pypdf") is not None
+    word_pdf_available = bool(
+        os.name == "nt" and importlib.util.find_spec("win32com") is not None
+    )
+    try:
+        cloud_pdf_available = bool(
+            importlib.util.find_spec("weasyprint") is not None
+            and pypdf_available
+            and WeasyPrintPdfConverter.is_available()
+        )
+    except (OSError, PdfCapabilityError):
+        cloud_pdf_available = False
+    if word_pdf_available:
+        pdf_converter = WordPdfConverter()
+        pdf_backend = "word-windows"
+    else:
+        pdf_converter = WeasyPrintPdfConverter()
+        pdf_backend = "weasyprint-cloud" if cloud_pdf_available else None
+    mail_pdf_available = bool(settings.retain_raw_eml and pdf_backend)
     app.extensions["asset_hub"] = {
         "settings": settings,
         "repository": repository,
         "case_service": service,
         "compensation_service": CompensationService(),
+        "accounting_policy_resolver": accounting_policy_resolver,
         "mutation_lock": RLock(),
         "supplier_upload_service": supplier_upload_service,
         "email_upload_service": EmailUploadService(),
+        "mail_artifact_store": mail_artifact_store,
+        "mail_pdf_service": MailPdfService(mail_artifact_store, pdf_converter),
+        "mail_pdf_available": mail_pdf_available,
+        "pdf_backend": pdf_backend,
+        "word_pdf_available": word_pdf_available,
+        "pypdf_available": pypdf_available,
+        "tran_reference_upload_service": tran_reference_upload_service,
+        "tran_workflow_service": TranWorkflowService(),
         "test_data_service": TestDataService(
             settings,
             repository,

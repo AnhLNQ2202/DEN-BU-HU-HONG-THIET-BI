@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 from collections import defaultdict
 from contextlib import suppress
@@ -23,6 +24,7 @@ from asset_compensation.parsers import SupplierLoadError, SupplierRecord, load_s
 
 MAX_SUPPLIER_FILE_BYTES = 20 * 1024 * 1024
 MAX_SUPPLIER_TOTAL_BYTES = 48 * 1024 * 1024
+MAX_SUPPLIER_DIRECTORY_ROWS = 40_000
 _MAX_XLSX_EXPANDED_BYTES = 100 * 1024 * 1024
 _VERSION_RE = re.compile(r"[0-9a-f]{32}")
 _DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -174,7 +176,9 @@ class SupplierUploadService:
                 # Retain only the data-minimized normalized directory.
                 active_path.unlink()
                 inactive_path.unlink()
-                self._write_normalized(staging / "directory.csv", records)
+                normalized_path = staging / "directory.csv"
+                self._write_normalized(normalized_path, records)
+                self._verify_normalized(normalized_path, records)
                 updated_at = datetime.now(UTC).isoformat()
                 imported, updated, unchanged, removed = self._changes(previous, records)
                 metadata = {
@@ -221,7 +225,10 @@ class SupplierUploadService:
                 return {}
             source = version_dir / "directory.csv"
             try:
-                records = load_supplier_records(source)
+                records = load_supplier_records(
+                    source,
+                    max_data_rows=MAX_SUPPLIER_DIRECTORY_ROWS,
+                )
             except (OSError, SupplierLoadError) as exc:
                 raise SupplierUploadError(
                     "The active supplier directory is unavailable or invalid"
@@ -414,6 +421,12 @@ class SupplierUploadService:
                         raise SupplierUploadError(
                             f"{role} XLSX contains unsupported active or embedded content"
                         )
+                    if folded_name.endswith(".rels"):
+                        SupplierUploadService._reject_external_relationships(
+                            archive,
+                            item,
+                            role,
+                        )
                 expanded = sum(item.file_size for item in entries)
                 if expanded > _MAX_XLSX_EXPANDED_BYTES:
                     raise SupplierUploadError(
@@ -421,6 +434,31 @@ class SupplierUploadService:
                     )
         except zipfile.BadZipFile as exc:
             raise SupplierUploadError(f"{role} file is not a valid XLSX workbook") from exc
+
+    @staticmethod
+    def _reject_external_relationships(
+        archive: zipfile.ZipFile,
+        entry: zipfile.ZipInfo,
+        role: str,
+    ) -> None:
+        """Reject hyperlinks and any other relationship leaving the workbook."""
+
+        try:
+            with archive.open(entry) as relationship_stream:
+                for _, element in ET.iterparse(relationship_stream, events=("end",)):
+                    attributes = {
+                        key.rsplit("}", 1)[-1].casefold(): str(value).strip().casefold()
+                        for key, value in element.attrib.items()
+                    }
+                    if attributes.get("targetmode") == "external":
+                        raise SupplierUploadError(
+                            f"{role} XLSX contains an external relationship"
+                        )
+                    element.clear()
+        except ET.ParseError as exc:
+            raise SupplierUploadError(
+                f"{role} XLSX contains an invalid relationship definition"
+            ) from exc
 
     @staticmethod
     def _load_records(
@@ -540,6 +578,30 @@ class SupplierUploadService:
             stream.flush()
             os.fsync(stream.fileno())
         _best_effort_chmod(path, 0o600)
+
+    @classmethod
+    def _verify_normalized(cls, path: Path, expected: list[SupplierRecord]) -> None:
+        """Prove the minimized directory can be read before activating its pointer."""
+
+        try:
+            actual = load_supplier_records(
+                path,
+                max_data_rows=MAX_SUPPLIER_DIRECTORY_ROWS,
+            )
+        except (OSError, SupplierLoadError) as exc:
+            raise SupplierUploadError(
+                "Could not verify the normalized supplier directory"
+            ) from exc
+        expected_signatures = {
+            record.domain: cls._record_signature(record) for record in expected
+        }
+        actual_signatures = {
+            record.domain: cls._record_signature(record) for record in actual
+        }
+        if actual_signatures != expected_signatures:
+            raise SupplierUploadError(
+                "Normalized supplier directory failed integrity verification"
+            )
 
     @staticmethod
     def _record_signature(record: SupplierRecord) -> tuple[object, ...]:

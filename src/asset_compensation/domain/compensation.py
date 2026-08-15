@@ -58,7 +58,15 @@ def _date(value: date | str, field_name: str) -> date:
         raise ValidationError(f"{field_name} must use YYYY-MM-DD") from exc
 
 
-def _money(value: Decimal | int | str, field_name: str) -> Decimal:
+def _optional_date(value: date | str | None, field_name: str) -> date | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return _date(value, field_name)
+
+
+def _money(value: Decimal | int | str | None, field_name: str) -> Decimal | None:
+    if value is None or str(value).strip() == "":
+        return None
     if isinstance(value, bool):
         raise ValidationError(f"{field_name} must be a non-negative whole VND amount")
     try:
@@ -110,7 +118,9 @@ def _fee_rate(value: Decimal | int | float | str | None) -> Decimal | None:
     return rate
 
 
-def _reference_status(value: ReferenceStatus | str) -> ReferenceStatus:
+def _reference_status(value: ReferenceStatus | str | None) -> ReferenceStatus | None:
+    if value is None or str(value).strip() == "":
+        return None
     if isinstance(value, ReferenceStatus):
         return value
     try:
@@ -129,8 +139,8 @@ class CompensationAsset:
     asset_name: str
     domain: str
     lost_date: date | str
-    cost: Decimal | int | str
-    start_date: date | str
+    cost: Decimal | int | str | None
+    start_date: date | str | None
     asset_number: str | None = None
     book: str | None = None
     entity: str | None = None
@@ -139,8 +149,9 @@ class CompensationAsset:
     location: str | None = None
     group: DepreciationGroup | str | None = None
     fee_rate: Decimal | int | float | str | None = None
-    physical: bool = True
-    lookup_status: ReferenceStatus | str = ReferenceStatus.MATCHED
+    physical: bool | None = None
+    lookup_status: ReferenceStatus | str | None = None
+    classification_confirmed: bool = False
 
     def __post_init__(self) -> None:
         tag_number = _required_text(self.tag_number, "tag_number").upper()
@@ -148,7 +159,7 @@ class CompensationAsset:
         object.__setattr__(self, "asset_name", _required_text(self.asset_name, "asset_name"))
         object.__setattr__(self, "domain", _required_text(self.domain, "domain"))
         object.__setattr__(self, "lost_date", _date(self.lost_date, "lost_date"))
-        object.__setattr__(self, "start_date", _date(self.start_date, "start_date"))
+        object.__setattr__(self, "start_date", _optional_date(self.start_date, "start_date"))
         object.__setattr__(self, "cost", _money(self.cost, "cost"))
         for field_name in (
             "asset_number",
@@ -161,10 +172,12 @@ class CompensationAsset:
             object.__setattr__(self, field_name, _optional_text(getattr(self, field_name)))
         object.__setattr__(self, "group", _group(self.group))
         object.__setattr__(self, "fee_rate", _fee_rate(self.fee_rate))
-        if not isinstance(self.physical, bool):
-            raise ValidationError("physical must be a boolean")
+        if self.physical is not None and not isinstance(self.physical, bool):
+            raise ValidationError("physical must be a boolean or null")
         object.__setattr__(self, "lookup_status", _reference_status(self.lookup_status))
-        if self.lost_date < self.start_date:
+        if not isinstance(self.classification_confirmed, bool):
+            raise ValidationError("classification_confirmed must be a boolean")
+        if self.start_date is not None and self.lost_date < self.start_date:
             raise ValidationError("lost_date cannot be earlier than start_date")
 
     @property
@@ -177,8 +190,8 @@ class CompensationAsset:
             "asset_name": self.asset_name,
             "domain": self.domain,
             "lost_date": self.lost_date.isoformat(),
-            "cost": int(self.cost),
-            "start_date": self.start_date.isoformat(),
+            "cost": int(self.cost) if self.cost is not None else None,
+            "start_date": self.start_date.isoformat() if self.start_date else None,
             "asset_number": self.asset_number,
             "book": self.book,
             "entity": self.entity,
@@ -188,7 +201,8 @@ class CompensationAsset:
             "group": self.group.value if self.group else None,
             "fee_rate": float(self.fee_rate) if self.fee_rate is not None else None,
             "physical": self.physical,
-            "lookup_status": self.lookup_status.value,
+            "lookup_status": self.lookup_status.value if self.lookup_status else None,
+            "classification_confirmed": self.classification_confirmed,
         }
 
 

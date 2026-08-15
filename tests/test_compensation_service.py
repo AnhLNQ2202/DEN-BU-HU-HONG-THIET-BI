@@ -30,6 +30,8 @@ def _asset(**overrides: object) -> CompensationAsset:
         "start_date": date(2026, 1, 1),
         "lost_date": date(2026, 1, 1),
         "cost": 1_000_000,
+        "physical": True,
+        "lookup_status": ReferenceStatus.MATCHED,
     }
     values.update(overrides)
     return CompensationAsset(**values)  # type: ignore[arg-type]
@@ -197,6 +199,70 @@ def test_nonphysical_item_is_listed_but_not_calculated() -> None:
     assert result.review_required is False
     assert result.total_amount is None
     assert "physical IT asset" in result.reasons[0]
+
+
+def test_nonphysical_item_does_not_require_cost_or_start_date() -> None:
+    result = CompensationService().preview(
+        _asset(
+            tag_number="SRV10001",
+            asset_name="Synthetic cloud service",
+            physical=False,
+            cost=None,
+            start_date=None,
+            lookup_status=None,
+        )
+    )
+
+    assert result.status is CompensationStatus.NOT_APPLICABLE
+    assert result.input.cost is None
+    assert result.input.start_date is None
+
+
+def test_missing_physical_reference_fields_require_review() -> None:
+    service = CompensationService()
+
+    missing_cost = service.preview(_asset(cost=None))
+    missing_date = service.preview(_asset(start_date=None))
+
+    assert missing_cost.status is CompensationStatus.NEEDS_REVIEW
+    assert "cost" in missing_cost.reasons[0]
+    assert missing_date.status is CompensationStatus.NEEDS_REVIEW
+    assert "start_date" in missing_date.reasons[0]
+
+
+def test_unverified_physical_or_reference_status_is_not_assumed() -> None:
+    service = CompensationService()
+
+    physical_unknown = service.preview(_asset(physical=None))
+    lookup_unknown = service.preview(_asset(lookup_status=None))
+
+    assert physical_unknown.status is CompensationStatus.NEEDS_REVIEW
+    assert "has not been verified" in physical_unknown.reasons[0]
+    assert lookup_unknown.status is CompensationStatus.NEEDS_REVIEW
+    assert "has not been verified" in lookup_unknown.reasons[0]
+
+
+def test_zero_cost_requires_approved_replacement_cost() -> None:
+    result = CompensationService().preview(_asset(cost=0))
+
+    assert result.status is CompensationStatus.NEEDS_REVIEW
+    assert result.total_amount is None
+    assert "zero" in result.reasons[0].lower()
+
+
+def test_user_confirmed_unknown_group_and_fee_can_be_calculated() -> None:
+    result = CompensationService().preview(
+        _asset(
+            tag_number="ZZZ10001",
+            group="FOUR_YEAR",
+            fee_rate="5%",
+            classification_confirmed=True,
+        )
+    )
+
+    assert result.status is CompensationStatus.CALCULATED
+    assert result.depreciation_group is DepreciationGroup.FOUR_YEAR
+    assert result.fee_rate == Decimal("0.05")
 
 
 def test_conflicting_manual_group_or_fee_requires_review() -> None:

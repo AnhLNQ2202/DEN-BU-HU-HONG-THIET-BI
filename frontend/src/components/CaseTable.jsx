@@ -42,7 +42,17 @@ function StatusSelect({ caseItem, language, busy, onUpdateStatus }) {
   );
 }
 
-function CaseRows({ cases, language, statusBusy, onOpen, onUpdateStatus }) {
+function CaseRows({
+  cases,
+  language,
+  mailPdfBusyHandle,
+  mailPdfCapabilities,
+  mailPdfDownloads,
+  statusBusy,
+  onCreateMailPdf,
+  onOpen,
+  onUpdateStatus,
+}) {
   return cases.map((caseItem) => {
     const isDone = ["ACCOUNTED", "CLOSED"].includes(caseItem.status);
     const hasWarnings = caseItem.warnings.length > 0;
@@ -54,6 +64,17 @@ function CaseRows({ cases, language, statusBusy, onOpen, onUpdateStatus }) {
       language,
       caseItem.case_type === "LOST" ? "lostLabel" : "damagedLabel",
     );
+    const sourceHandle = caseItem.source_eml?.handle || "";
+    const pdfDownload = sourceHandle ? mailPdfDownloads[sourceHandle] : null;
+    const pdfBusy = Boolean(mailPdfBusyHandle);
+    const canCreatePdf = mailPdfCapabilities?.mail_pdf_individual === true
+      && Boolean(sourceHandle)
+      && typeof onCreateMailPdf === "function";
+    const pdfTitle = !sourceHandle
+      ? translate(language, "pdfNoSourceForCase")
+      : canCreatePdf
+        ? translate(language, "pdfCreateForCase")
+        : translate(language, "localOnly");
 
     return (
       <tr className={rowClass} key={caseItem.id}>
@@ -88,14 +109,26 @@ function CaseRows({ cases, language, statusBusy, onOpen, onUpdateStatus }) {
           >
             ✉ {translate(language, "mail")}
           </button>
-          <button
-            className="mail-link-pdf document-button is-disabled"
-            type="button"
-            disabled
-            title={translate(language, "localOnly")}
-          >
-            ▧ {translate(language, "pdf")}
-          </button>
+          {pdfDownload ? (
+            <a
+              className="mail-link-pdf document-button"
+              href={pdfDownload}
+              download
+              title={translate(language, "pdfDownloadReady")}
+            >
+              ↓ {translate(language, "pdf")}
+            </a>
+          ) : (
+            <button
+              className={`mail-link-pdf document-button ${canCreatePdf ? "" : "is-disabled"}`}
+              type="button"
+              disabled={!canCreatePdf || pdfBusy}
+              title={pdfTitle}
+              onClick={() => onCreateMailPdf?.(caseItem)}
+            >
+              {mailPdfBusyHandle === sourceHandle ? "…" : "▧"} {translate(language, "pdf")}
+            </button>
+          )}
         </td>
       </tr>
     );
@@ -106,10 +139,14 @@ export function CaseTable({
   cases,
   filters,
   language,
+  mailPdfBusyHandle = "",
+  mailPdfCapabilities = {},
+  mailPdfDownloads = {},
   refreshing,
   statusBusy,
   showFilters = true,
   onFiltersChange,
+  onCreateMailPdf,
   onOpen,
   onRefresh,
   onUpdateStatus,
@@ -194,7 +231,11 @@ export function CaseTable({
             <CaseRows
               cases={cases}
               language={language}
+              mailPdfBusyHandle={mailPdfBusyHandle}
+              mailPdfCapabilities={mailPdfCapabilities}
+              mailPdfDownloads={mailPdfDownloads}
               statusBusy={statusBusy}
+              onCreateMailPdf={onCreateMailPdf}
               onOpen={onOpen}
               onUpdateStatus={onUpdateStatus}
             />

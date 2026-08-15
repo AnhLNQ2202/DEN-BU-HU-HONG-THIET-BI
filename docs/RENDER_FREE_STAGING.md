@@ -27,7 +27,11 @@ instance Free.
   xuất hiện khi người dùng chủ động nạp fixture synthetic.
 - `ASSET_HUB_ALLOW_TEST_RESET=true` chỉ mở nút **Xóa dữ liệu test** trên staging
   dùng một lần. Nút yêu cầu xác nhận rồi xoá case, batch, file output và bản
-  Supplier đã upload; không đụng tới inbox hay template cấu hình bên ngoài.
+  Supplier/Tran reference đã upload, EML retained và output Tran/PDF do app đặt
+  tên; không đụng tới inbox, file lạ hay template/reference cấu hình bên ngoài.
+- `ASSET_HUB_RETAIN_RAW_EML=true` chỉ phù hợp vì service này dùng filesystem
+  tạm và chỉ nhận fixture synthetic. Nó mở source download và PDF cloud; dữ
+  liệu sẽ mất khi restart hoặc khi bấm xoá test.
 - Render Free có filesystem tạm: restart, redeploy hoặc spin-down có thể xoá
   mọi thay đổi và file output. Đây là hành vi mong đợi của staging.
 - Chỉ upload cặp Supplier và EML synthetic/đã ẩn danh để test tính
@@ -40,14 +44,18 @@ cầu bảo mật.
 
 ## Smoke test
 
-- `GET /api/health` trả `200`, `"ok": true` và `"demo_mode": false`. Endpoint
-  này cố ý không yêu cầu Basic Auth để Render health check hoạt động.
+- `GET /api/health` trả `200`, `"ok": true` và tên service cố định. Endpoint
+  này cố ý không yêu cầu Basic Auth để Render health check hoạt động, nhưng
+  không công khai chế độ chạy hay số lượng hồ sơ.
 - `/` trả `401` khi chưa đăng nhập và tải dashboard sau khi dùng tài khoản
   staging.
 - Dashboard khởi đầu trống. Upload cặp Supplier synthetic, sau đó upload
   EML synthetic; case mới phải xuất hiện mà không cần restart.
 - Với case `LOST`, chọn case trong màn TranNNB và kiểm tra chỉ các
   trường thật sự có trong mail được điền sẵn.
+- Upload FA&GL synthetic, resolve một case, tải workbook. Với EML đã retain,
+  tạo PDF individual/batch và kiểm tra các link tải; cloud dùng renderer
+  WeasyPrint an toàn, không cần Microsoft Word.
 - Bấm **Xóa dữ liệu test**, xác nhận, rồi kiểm tra dashboard và trạng thái
   Supplier trở về trống.
 - Sau restart/redeploy, dữ liệu có thể bị xoá và dashboard trở lại

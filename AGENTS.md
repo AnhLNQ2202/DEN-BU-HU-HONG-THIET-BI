@@ -1,7 +1,12 @@
 # Repository guidance for coding agents
 
-This file applies to the whole repository. Read `README.md`, `ARCHITECTURE.md`
-and `docs/TEAM_DEVELOPMENT.md` before making broad changes.
+This file applies to the whole repository. Start with `PROJECT_CONTEXT.md`; it
+is the canonical AI handoff with the current release state, product decisions,
+business rules, API/deploy map and known limitations. Then read `README.md`,
+`ARCHITECTURE.md` and `docs/TEAM_DEVELOPMENT.md` before making broad changes.
+
+When a change alters behavior, rules, API, configuration, deployment or release
+state, update `PROJECT_CONTEXT.md` in the same pull request.
 
 ## Product contracts
 

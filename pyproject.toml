@@ -17,9 +17,12 @@ dependencies = [
 
 [project.optional-dependencies]
 email = ["lxml>=5,<7"]
+pdf = ["pypdf>=5,<7", "weasyprint>=68,<69"]
 windows = ["pywin32>=306", "pypdf>=5,<7"]
 deploy = ["gunicorn>=26,<27"]
 dev = [
+  "pypdf>=5,<7",
+  "weasyprint>=68,<69",
   "pytest>=8,<10",
   "pytest-cov>=5,<8",
   "ruff>=0.8,<1",

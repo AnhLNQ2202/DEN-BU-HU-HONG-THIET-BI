@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -14,6 +15,7 @@ from asset_compensation.domain import ParsedCase as DomainParsedCase
 from asset_compensation.parsers import (
     EmlParseError,
     EmlParser,
+    EmlSkipError,
     SupplierRecord,
     normalize_domain,
 )
@@ -29,6 +31,7 @@ class IngestionReport:
     cases: tuple[Case, ...]
     warnings: tuple[str, ...]
     unknown_files: tuple[str, ...]
+    skipped_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +64,24 @@ def _received_at(parsed: ParserCase, fallback: datetime) -> datetime:
     return fallback
 
 
+def _metadata_value(value: object, field_name: str = "metadata") -> object:
+    """Make parser metadata JSON-safe without rounding exact money values."""
+
+    if isinstance(value, Decimal):
+        return _vnd(value, field_name)
+    if isinstance(value, Mapping):
+        return {
+            str(key): _metadata_value(item, f"{field_name}.{key}")
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _metadata_value(item, f"{field_name}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
 def _to_domain_case(
     parsed: ParserCase,
     source_name: str,
@@ -73,26 +94,44 @@ def _to_domain_case(
     supplier = (
         supplier_directory.get(normalized_domain) if supplier_directory else None
     )
-    if supplier_directory is not None and supplier is None:
+    metadata_value = _metadata_value(parsed.metadata)
+    if not isinstance(metadata_value, dict):
+        raise ValidationError("Parser metadata must be a mapping")
+    metadata = metadata_value
+    source_marks_inactive = metadata.get("employee_inactive") is True
+
+    if supplier_directory is None:
+        metadata["supplier_lookup_status"] = "NOT_CONFIGURED"
+    elif supplier is None:
         if normalized_domain in ambiguous_supplier_domains:
+            metadata["supplier_lookup_status"] = "AMBIGUOUS"
             warnings.append(
                 "Supplier domain is ambiguous across multiple "
                 "Supplier Number/Employee Number records"
             )
         else:
+            metadata["supplier_lookup_status"] = "NOT_FOUND"
             warnings.append("Supplier domain was not found in the configured directory")
-    if supplier is not None and supplier.active is False:
-        warnings.append("Supplier record is inactive")
+    else:
+        metadata["supplier_active"] = supplier.active
+        if supplier.active is False:
+            metadata["supplier_lookup_status"] = "INACTIVE"
+            metadata["employee_inactive"] = True
+            metadata["employee_status_source"] = "SUPPLIER_DIRECTORY"
+            warnings.append("Supplier record is inactive")
+        elif supplier.active is True:
+            metadata["supplier_lookup_status"] = "ACTIVE"
+        else:
+            metadata["supplier_lookup_status"] = "MATCHED"
+    if source_marks_inactive:
+        metadata["employee_inactive"] = True
+        metadata["employee_status_source"] = "EMAIL_SUBJECT"
     if not parsed.domain:
         raise ValidationError("Parser could not determine an employee domain")
     if not parsed.asset_code:
         raise ValidationError("Parser could not determine an asset code")
     if parsed.received_at is None:
         warnings.append("Email Date header was missing or invalid; upload time was used")
-
-    metadata = dict(parsed.metadata)
-    if metadata.get("original_value") is not None:
-        metadata["original_value"] = _vnd(metadata["original_value"], "original_value")
 
     return DomainParsedCase(
         case_type=parsed.case_type,
@@ -130,12 +169,13 @@ def ingest_eml_directory(
     candidates: list[DomainParsedCase] = []
     warnings: list[str] = []
     unknown: list[str] = []
+    skipped: list[str] = []
 
     for source in sorted(root.glob("*.eml"), key=lambda item: item.name.casefold()):
         try:
-            parsed = parser.parse(source)
+            parsed_cases = parser.parse_many(source)
             fallback = datetime.fromtimestamp(source.stat().st_mtime, tz=UTC)
-            candidates.append(
+            candidates.extend(
                 _to_domain_case(
                     parsed,
                     source.name,
@@ -143,7 +183,11 @@ def ingest_eml_directory(
                     supplier_directory,
                     ambiguous_supplier_domains,
                 )
+                for parsed in parsed_cases
             )
+        except EmlSkipError as exc:
+            skipped.append(source.name)
+            warnings.append(f"{source.name}: skipped ({exc.reason})")
         except (
             EmlParseError,
             InvalidOperation,
@@ -155,7 +199,9 @@ def ingest_eml_directory(
             warnings.append(f"{source.name}: {exc}")
 
     persisted = service.ingest(candidates)
-    return IngestionReport(tuple(persisted), tuple(warnings), tuple(unknown))
+    return IngestionReport(
+        tuple(persisted), tuple(warnings), tuple(unknown), tuple(skipped)
+    )
 
 
 def ingest_eml_payloads(
@@ -165,6 +211,7 @@ def ingest_eml_payloads(
     supplier_directory: Mapping[str, SupplierRecord] | None = None,
     ambiguous_supplier_domains: frozenset[str] = frozenset(),
     uploaded_at: datetime | None = None,
+    artifact_metadata_by_sha256: Mapping[str, Mapping[str, object]] | None = None,
 ) -> IngestionReport:
     """Parse validated EML bytes and persist every valid case in one transaction."""
 
@@ -173,6 +220,7 @@ def ingest_eml_payloads(
     candidates: list[DomainParsedCase] = []
     warnings: list[str] = []
     unknown: list[str] = []
+    skipped: list[str] = []
     known_content: dict[str, str] = {}
     for case in service.list_cases():
         message_id_hash = str(case.metadata.get("message_id_sha256") or "")
@@ -186,9 +234,27 @@ def ingest_eml_payloads(
             known_content[message_id_hash] = content_sha
     for payload in payloads:
         try:
-            parsed = parser.parse_bytes(payload.data, source_file=payload.filename)
+            parsed_cases = parser.parse_bytes_many(
+                payload.data, source_file=payload.filename
+            )
             content_sha = hashlib.sha256(payload.data).hexdigest()
-            message_id = str(parsed.source_id or "").strip(" <>").casefold()
+            artifact_metadata: dict[str, str] = {}
+            if artifact_metadata_by_sha256 is not None:
+                raw_artifact = artifact_metadata_by_sha256.get(content_sha)
+                if raw_artifact is not None:
+                    handle = raw_artifact.get("mail_artifact_handle")
+                    filename = raw_artifact.get("mail_artifact_filename")
+                    if handle != f"eml-sha256-{content_sha}":
+                        raise ValidationError("Mail artifact handle does not match EML content")
+                    if not isinstance(filename, str) or not re.fullmatch(
+                        r"[^/\\\x00-\x1f]{1,255}\.eml", filename, flags=re.IGNORECASE
+                    ):
+                        raise ValidationError("Mail artifact filename is invalid")
+                    artifact_metadata = {
+                        "mail_artifact_handle": handle,
+                        "mail_artifact_filename": filename,
+                    }
+            message_id = str(parsed_cases[0].source_id or "").strip(" <>").casefold()
             message_id_hash = hashlib.sha256(message_id.encode("utf-8")).hexdigest()
             if (
                 message_id
@@ -201,29 +267,37 @@ def ingest_eml_payloads(
                     "manual review required"
                 )
                 continue
-            safe_metadata = {
-                key: value
-                for key, value in parsed.metadata.items()
-                if key not in {"message_id", "sender", "subject"}
-            }
-            parsed = replace(
-                parsed,
-                metadata={
-                    **safe_metadata,
-                    "message_id_sha256": message_id_hash,
-                    "content_sha256": content_sha,
-                },
-            )
-            candidate = _to_domain_case(
-                parsed,
-                payload.filename,
-                fallback,
-                supplier_directory,
-                ambiguous_supplier_domains,
-            )
-            candidates.append(candidate)
+            payload_candidates: list[DomainParsedCase] = []
+            for parsed in parsed_cases:
+                safe_metadata = {
+                    key: value
+                    for key, value in parsed.metadata.items()
+                    if key not in {"message_id", "sender", "subject"}
+                }
+                safe_parsed = replace(
+                    parsed,
+                    metadata={
+                        **safe_metadata,
+                        "message_id_sha256": message_id_hash,
+                        "content_sha256": content_sha,
+                        **artifact_metadata,
+                    },
+                )
+                payload_candidates.append(
+                    _to_domain_case(
+                        safe_parsed,
+                        payload.filename,
+                        fallback,
+                        supplier_directory,
+                        ambiguous_supplier_domains,
+                    )
+                )
+            candidates.extend(payload_candidates)
             if message_id:
                 known_content[message_id_hash] = content_sha
+        except EmlSkipError as exc:
+            skipped.append(payload.filename)
+            warnings.append(f"{payload.filename}: skipped ({exc.reason})")
         except (EmlParseError, InvalidOperation, ValidationError, UnicodeError):
             unknown.append(payload.filename)
             warnings.append(
@@ -234,4 +308,6 @@ def ingest_eml_payloads(
     warnings.extend(
         f"{case.id}: {warning}" for case in persisted for warning in case.warnings
     )
-    return IngestionReport(tuple(persisted), tuple(warnings), tuple(unknown))
+    return IngestionReport(
+        tuple(persisted), tuple(warnings), tuple(unknown), tuple(skipped)
+    )

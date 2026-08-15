@@ -159,9 +159,10 @@ function SupplierResult({ language, result }) {
   );
 }
 
-function EmailResult({ language, result }) {
+export function EmailResult({ language, result }) {
   if (!result) return null;
   const warnings = messagesFrom(result.warnings);
+  const skippedFiles = messagesFrom(result.skipped_files);
   const unknownFiles = messagesFrom(result.unknown_files);
   const caseIds = Array.isArray(result.case_ids) ? result.case_ids.filter(Boolean) : [];
   return (
@@ -170,6 +171,7 @@ function EmailResult({ language, result }) {
       <dl className="upload-summary upload-summary--email">
         <div><dt>{translate(language, "emailReceived")}</dt><dd>{numberFormatter.format(countFrom(result, "received_count"))}</dd></div>
         <div><dt>{translate(language, "emailIngested")}</dt><dd>{numberFormatter.format(countFrom(result, "ingested"))}</dd></div>
+        <div className={skippedFiles.length ? "has-warning" : ""}><dt>{translate(language, "emailSkipped")}</dt><dd>{numberFormatter.format(skippedFiles.length)}</dd></div>
         <div className={unknownFiles.length ? "has-warning" : ""}><dt>{translate(language, "emailRejected")}</dt><dd>{numberFormatter.format(unknownFiles.length)}</dd></div>
       </dl>
       {!!caseIds.length && (
@@ -183,11 +185,158 @@ function EmailResult({ language, result }) {
         items={warnings}
       />
       <WarningList
+        className="is-warning"
+        heading={translate(language, "emailSkippedFiles")}
+        items={skippedFiles}
+      />
+      <WarningList
         className="is-error"
         heading={translate(language, "emailRejectedFiles")}
         items={unknownFiles}
       />
     </div>
+  );
+}
+
+export function EmailUploadPanel({
+  idPrefix = "email",
+  language,
+  onCompleted,
+  onEmailUpload,
+  resetVersion = 0,
+  titleKey = "emailUploadPanel",
+}) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [emailFiles, setEmailFiles] = useState([]);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailProgress, setEmailProgress] = useState(null);
+  const [emailError, setEmailError] = useState("");
+  const [emailResult, setEmailResult] = useState(null);
+  const emailInputRef = useRef(null);
+  const emailAbortRef = useRef(null);
+  const selectedEmailError = useMemo(
+    () => emailFilesError(emailFiles, language),
+    [emailFiles, language],
+  );
+  const confirmationId = `${idPrefix}-synthetic-confirmation`;
+  const inputId = `${idPrefix}-files`;
+  const hintId = `${idPrefix}-file-hint`;
+  const errorId = `${idPrefix}-file-error`;
+
+  useEffect(() => () => emailAbortRef.current?.abort(), []);
+
+  useEffect(() => {
+    if (resetVersion < 1) return;
+    emailAbortRef.current?.abort();
+    setConfirmed(false);
+    setEmailFiles([]);
+    setEmailProgress(null);
+    setEmailError("");
+    setEmailResult(null);
+    if (emailInputRef.current) emailInputRef.current.value = "";
+  }, [resetVersion]);
+
+  function selectEmailFiles(event) {
+    setEmailFiles(Array.from(event.target.files || []));
+    setEmailError("");
+    setEmailResult(null);
+  }
+
+  async function uploadEmails(event) {
+    event.preventDefault();
+    const validationError = selectedEmailError
+      || (!emailFiles.length ? translate(language, "emailMissingFiles") : "")
+      || (!confirmed ? translate(language, "uploadConfirmationRequired") : "");
+    if (validationError) {
+      setEmailError(validationError);
+      return;
+    }
+
+    const controller = new AbortController();
+    emailAbortRef.current = controller;
+    setEmailBusy(true);
+    setEmailProgress(0);
+    setEmailError("");
+    setEmailResult(null);
+    try {
+      const result = await onEmailUpload({
+        files: emailFiles,
+        signal: controller.signal,
+        onProgress: ({ percent }) => setEmailProgress(percent),
+      });
+      setEmailResult(result);
+      setEmailFiles([]);
+      if (emailInputRef.current) emailInputRef.current.value = "";
+      onCompleted?.(result);
+    } catch (error) {
+      setEmailError(
+        error.name === "AbortError" ? translate(language, "uploadCancelled") : error.message,
+      );
+    } finally {
+      emailAbortRef.current = null;
+      setEmailBusy(false);
+      setEmailProgress(null);
+    }
+  }
+
+  return (
+    <section className="panel operation-panel upload-workspace" aria-busy={emailBusy}>
+      <h3>{translate(language, titleKey)}</h3>
+      <div className="upload-staging-warning">
+        <strong>{translate(language, "uploadStagingTitle")}</strong>
+        <span>{translate(language, "emailStagingHint")}</span>
+      </div>
+      <label className="upload-confirmation" htmlFor={confirmationId}>
+        <input
+          id={confirmationId}
+          type="checkbox"
+          checked={confirmed}
+          disabled={emailBusy}
+          onChange={(event) => setConfirmed(event.target.checked)}
+        />
+        <span>{translate(language, "uploadConfirmation")}</span>
+      </label>
+      <form className="upload-form" onSubmit={uploadEmails} noValidate>
+        <div className="panel-row email-upload-row">
+          <label className="small" htmlFor={inputId}>{translate(language, "emailFileLabel")}</label>
+          <input
+            ref={emailInputRef}
+            id={inputId}
+            type="file"
+            multiple
+            accept=".eml,message/rfc822"
+            required
+            disabled={emailBusy}
+            aria-describedby={`${hintId} ${errorId}`}
+            aria-invalid={Boolean(selectedEmailError)}
+            onChange={selectEmailFiles}
+          />
+          <button
+            className="btn secondary"
+            type="submit"
+            disabled={!confirmed || !emailFiles.length || Boolean(selectedEmailError) || emailBusy}
+          >
+            {emailBusy ? translate(language, "emailUploading") : translate(language, "ingestEmail")}
+          </button>
+          {emailBusy && (
+            <button className="btn secondary" type="button" onClick={() => emailAbortRef.current?.abort()}>
+              {translate(language, "uploadCancel")}
+            </button>
+          )}
+        </div>
+        <p id={hintId} className="upload-hint">{translate(language, "emailFileTypes")}</p>
+        {!!emailFiles.length && !selectedEmailError && (
+          <div className="selected-upload-files">
+            <strong>{numberFormatter.format(emailFiles.length)} {translate(language, "emailFilesSelected")}</strong>
+            <span>{emailFiles.slice(0, 4).map((file) => file.name).join(", ")}{emailFiles.length > 4 ? ` +${emailFiles.length - 4}` : ""}</span>
+          </div>
+        )}
+        {selectedEmailError && <div id={errorId} className="inline-error" role="alert">{selectedEmailError}</div>}
+        {emailError && <div className="inline-error" role="alert">{emailError}</div>}
+        {emailBusy && <UploadProgress language={language} percent={emailProgress} kind="email" />}
+        <EmailResult language={language} result={emailResult} />
+      </form>
+    </section>
   );
 }
 

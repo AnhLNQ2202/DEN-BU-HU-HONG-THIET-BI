@@ -27,7 +27,14 @@ COPY --from=frontend-build \
     /build/src/asset_compensation/web/static/dist \
     ./src/asset_compensation/web/static/dist
 
-RUN python -m pip install --no-cache-dir ".[deploy,email]" \
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+       fonts-dejavu-core \
+       libharfbuzz-subset0 \
+       libpango-1.0-0 \
+       libpangoft2-1.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir ".[deploy,email,pdf]" \
     && groupadd --gid 1000 app \
     && useradd --uid 1000 --gid app --create-home --shell /bin/bash app \
     && mkdir -p /var/data \

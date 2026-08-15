@@ -142,7 +142,10 @@ def _money(value: Decimal) -> int:
     return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
-def _known_group(barcode: str) -> DepreciationGroup | None:
+def known_group(barcode: str) -> DepreciationGroup | None:
+    """Return the approved built-in schedule for a normalized three-letter barcode."""
+
+    barcode = str(barcode or "").strip().upper()[:3]
     if barcode in FOUR_YEAR_BARCODES:
         return DepreciationGroup.FOUR_YEAR
     if barcode in SIX_YEAR_BARCODES:
@@ -150,7 +153,10 @@ def _known_group(barcode: str) -> DepreciationGroup | None:
     return None
 
 
-def _known_fee(barcode: str) -> Decimal:
+def known_fee(barcode: str) -> Decimal:
+    """Return the approved fee for a known physical-asset barcode."""
+
+    barcode = str(barcode or "").strip().upper()[:3]
     return THIRTY_PERCENT if barcode in COMPANY_DATA_BARCODES else FIVE_PERCENT
 
 
@@ -158,12 +164,30 @@ class CompensationService:
     """Calculate deterministic, side-effect-free compensation previews."""
 
     def preview(self, asset: CompensationAsset) -> CompensationPreview:
+        if asset.physical is None:
+            return CompensationPreview(
+                input=asset,
+                status=CompensationStatus.NEEDS_REVIEW,
+                reasons=(
+                    "Whether the item is a physical IT asset has not been verified.",
+                ),
+                formula_explanation="No physical/non-physical classification was guessed.",
+            )
+
         if not asset.physical:
             return CompensationPreview(
                 input=asset,
                 status=CompensationStatus.NOT_APPLICABLE,
                 reasons=("Only physical IT assets are covered by IT.POL.01.",),
                 formula_explanation="No calculation: the item is not a physical IT asset.",
+            )
+
+        if asset.lookup_status is None:
+            return CompensationPreview(
+                input=asset,
+                status=CompensationStatus.NEEDS_REVIEW,
+                reasons=("Reference lookup status has not been verified.",),
+                formula_explanation="No reference match was assumed.",
             )
 
         if asset.lookup_status is not ReferenceStatus.MATCHED:
@@ -177,8 +201,38 @@ class CompensationService:
                 formula_explanation="No calculation was made from unresolved reference data.",
             )
 
+        missing_reference_fields = tuple(
+            name
+            for name, value in (("cost", asset.cost), ("start_date", asset.start_date))
+            if value is None
+        )
+        if missing_reference_fields:
+            return CompensationPreview(
+                input=asset,
+                status=CompensationStatus.NEEDS_REVIEW,
+                reasons=(
+                    "Missing verified reference fields: "
+                    + ", ".join(missing_reference_fields)
+                    + ".",
+                ),
+                formula_explanation="No cost or date was guessed from historical outputs.",
+            )
+
+        assert asset.start_date is not None and asset.cost is not None
+
         usage_months = rounded_usage_months(asset.start_date, asset.lost_date)
         day_count = days360_european(asset.start_date, asset.lost_date)
+
+        if asset.cost == 0:
+            return CompensationPreview(
+                input=asset,
+                status=CompensationStatus.NEEDS_REVIEW,
+                reasons=(
+                    "Cost is zero; obtain an approved replacement cost before calculating.",
+                ),
+                usage_months=usage_months,
+                formula_explanation="A zero cost was not treated as a zero compensation amount.",
+            )
 
         # Mandatory policy ordering: decide the per-asset exemption before any
         # depreciation-group or responsibility-fee calculation.
@@ -200,32 +254,38 @@ class CompensationService:
                 ),
             )
 
-        approved_group = _known_group(asset.barcode)
-        if approved_group is None:
+        mapped_group = known_group(asset.barcode)
+        if mapped_group is None and not (
+            asset.classification_confirmed
+            and asset.group is not None
+            and asset.fee_rate is not None
+        ):
             return CompensationPreview(
                 input=asset,
                 status=CompensationStatus.NEEDS_REVIEW,
                 reasons=(
                     f"Barcode {asset.barcode or '(missing)'} is not in the approved "
-                    "Define/CMDB mapping.",
+                    "Define/CMDB mapping; a user-confirmed group and fee are required.",
                 ),
                 usage_months=usage_months,
                 formula_explanation="No depreciation group or fee was guessed.",
             )
 
-        if asset.group is not None and asset.group is not approved_group:
+        if mapped_group is not None and asset.group is not None and asset.group is not mapped_group:
             return CompensationPreview(
                 input=asset,
                 status=CompensationStatus.NEEDS_REVIEW,
                 reasons=(
                     f"Provided group {asset.group.value} conflicts with approved "
-                    f"{asset.barcode} mapping {approved_group.value}.",
+                    f"{asset.barcode} mapping {mapped_group.value}.",
                 ),
                 usage_months=usage_months,
-                depreciation_group=approved_group,
+                depreciation_group=mapped_group,
                 formula_explanation="No calculation was made from conflicting classifications.",
             )
 
+        approved_group = mapped_group or asset.group
+        assert approved_group is not None
         if asset.cost < EXEMPTION_THRESHOLD and approved_group is DepreciationGroup.SIX_YEAR:
             return CompensationPreview(
                 input=asset,
@@ -244,8 +304,15 @@ class CompensationService:
             if asset.cost < EXEMPTION_THRESHOLD
             else approved_group
         )
-        approved_fee = _known_fee(asset.barcode)
-        if asset.fee_rate is not None and asset.fee_rate != approved_fee:
+        approved_fee = (
+            known_fee(asset.barcode) if mapped_group is not None else asset.fee_rate
+        )
+        assert approved_fee is not None
+        if (
+            mapped_group is not None
+            and asset.fee_rate is not None
+            and asset.fee_rate != approved_fee
+        ):
             return CompensationPreview(
                 input=asset,
                 status=CompensationStatus.NEEDS_REVIEW,
@@ -309,7 +376,8 @@ class CompensationService:
             location=data.get("location"),
             group=data.get("group"),
             fee_rate=data.get("fee_rate"),
-            physical=data.get("physical", True),
-            lookup_status=data.get("lookup_status", ReferenceStatus.MATCHED),
+            physical=data.get("physical"),
+            lookup_status=data.get("lookup_status"),
+            classification_confirmed=data.get("classification_confirmed", False),
         )
         return self.preview(asset)

@@ -117,6 +117,7 @@ def _records_from_rows(
     find_header: bool = False,
     skip_unresolved_domains: bool = False,
     warnings: list[str] | None = None,
+    max_data_rows: int = _MAX_SUPPLIER_DATA_ROWS,
 ) -> list[SupplierRecord]:
     iterator = iter(rows)
     columns: dict[str, int] | None = None
@@ -149,8 +150,10 @@ def _records_from_rows(
         if not any(value not in (None, "") for value in row):
             continue
         data_row_count += 1
-        if data_row_count > _MAX_SUPPLIER_DATA_ROWS:
-            raise SupplierLoadError("Supplier source exceeds the 20,000-row limit")
+        if data_row_count > max_data_rows:
+            raise SupplierLoadError(
+                f"Supplier source exceeds the {max_data_rows:,}-row limit"
+            )
         if len(row) > _MAX_SUPPLIER_COLUMNS:
             raise SupplierLoadError("Supplier source exceeds the 32-column limit")
         cell_count += len(row)
@@ -305,6 +308,7 @@ def load_supplier_records(
     reject_duplicate_domains: bool = True,
     skip_unresolved_domains: bool = False,
     warnings: list[str] | None = None,
+    max_data_rows: int = _MAX_SUPPLIER_DATA_ROWS,
 ) -> list[SupplierRecord]:
     """Load supplier rows and fail fast on duplicate normalized domains."""
 
@@ -315,6 +319,7 @@ def load_supplier_records(
             reject_duplicate_domains=reject_duplicate_domains,
             skip_unresolved_domains=skip_unresolved_domains,
             warnings=warnings,
+            max_data_rows=max_data_rows,
         )
 
     path = Path(source)
@@ -327,6 +332,7 @@ def load_supplier_records(
                 reject_duplicate_domains=reject_duplicate_domains,
                 skip_unresolved_domains=skip_unresolved_domains,
                 warnings=warnings,
+                max_data_rows=max_data_rows,
             )
     if suffix == ".xlsx":
         workbook = load_workbook(path, read_only=True, data_only=True)
@@ -339,6 +345,7 @@ def load_supplier_records(
                 find_header=True,
                 skip_unresolved_domains=skip_unresolved_domains,
                 warnings=warnings,
+                max_data_rows=max_data_rows,
             )
         finally:
             workbook.close()
@@ -350,6 +357,7 @@ def load_supplier_records(
             find_header=True,
             skip_unresolved_domains=skip_unresolved_domains,
             warnings=warnings,
+            max_data_rows=max_data_rows,
         )
     raise SupplierLoadError(f"Unsupported supplier source: {path.suffix or '<no extension>'}")
 

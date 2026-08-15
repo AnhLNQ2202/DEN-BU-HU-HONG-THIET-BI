@@ -18,6 +18,12 @@ services:
         value: "false"
       - key: ASSET_HUB_ALLOW_TEST_RESET
         value: "true"
+      # Staging accepts synthetic/anonymized EML fixtures so the team can
+      # create and merge PDFs. Files live under the disposable /tmp data dir.
+      - key: ASSET_HUB_RETAIN_RAW_EML
+        value: "true"
+      - key: ASSET_HUB_DRAFT_FROM_ADDRESS
+        value: operator@example.invalid
       - key: ASSET_HUB_SECRET_KEY
         generateValue: true
       - key: ASSET_HUB_ACCESS_USER

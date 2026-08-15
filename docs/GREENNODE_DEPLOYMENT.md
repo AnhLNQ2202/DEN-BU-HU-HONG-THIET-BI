@@ -78,6 +78,17 @@ Giữ `ASSET_HUB_DEMO_MODE=true` cho staging/hackathon. Trước khi dùng dữ 
 thật, đổi sang `false`, xoá database demo hoặc dùng data directory mới, và đặt
 template/supplier đã phê duyệt dưới `/srv/asset-hub/data/reference`.
 
+Để bật source EML download và PDF trên một GreenNode server đã được phê duyệt
+cho dữ liệu đó, đặt `ASSET_HUB_RETAIN_RAW_EML=true`. Để tạo draft Tran chưa gửi,
+đặt thêm `ASSET_HUB_DRAFT_FROM_ADDRESS`. Các path FA&GL, CCDC và Tran template
+có thể trỏ vào file read-only dưới `/var/data/reference`; hoặc operator có thể
+upload managed references qua UI. `compose.greennode.yaml` truyền đầy đủ các
+biến này và semantic accounting policy vào container, nhưng giữ tất cả ở trạng
+thái tắt/rỗng mặc định để fail closed.
+
+Không bật `ASSET_HUB_ALLOW_TEST_RESET` trên môi trường vận hành. Biến này chỉ
+dành cho disposable staging và mặc định là `false` trong GreenNode example.
+
 ## Deploy và smoke test
 
 ```bash

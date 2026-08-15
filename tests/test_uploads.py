@@ -122,7 +122,7 @@ def _damaged_eml(
 def _lost_eml(*, with_asset_row: bool) -> bytes:
     message = EmailMessage()
     message["Subject"] = (
-        "IT - Thông tin tài sản thất lạc - DEMO-MOU-902 - demo.lost"
+        "IT - Thông tin tài sản thất lạc - MOU16902 - demo.lost"
     )
     message["From"] = "Synthetic Asset Team <asset@example.invalid>"
     message["To"] = "Synthetic Lost User <demo.lost@example.invalid>"
@@ -137,13 +137,13 @@ def _lost_eml(*, with_asset_row: bool) -> bytes:
         Asset Name Product Name Domain Ngày bắt đầu sử dụng Ngày thất lạc/mất
         Nguyên giá ban đầu Mức khấu hao sử dụng còn lại Phí đền bù trách nhiệm
         Tổng số tiền đền bù
-        DEMO-MOU-902 Demo Wireless Pointer demo.lost 06/04/2026 04/08/2026
+        MOU16902 Demo Wireless Pointer demo.lost 06/04/2026 04/08/2026
         345,678 234,567 12,345 246,912
         """
     else:
         body = """
         Người quản lý thiết bị: demo.lost
-        Mã thiết bị: DEMO-MOU-902
+        Mã thiết bị: MOU16902
         Phí đền bù trách nhiệm khi mất thiết bị.
         Total:
         234,567
@@ -156,14 +156,14 @@ def _lost_eml(*, with_asset_row: bool) -> bytes:
 
 def _lost_eml_with_money_token(token: str) -> bytes:
     message = EmailMessage()
-    message["Subject"] = "IT - Thông báo mất thiết bị - DEMO-MOU-999 - demo.money"
+    message["Subject"] = "IT - Thông báo mất thiết bị - MOU16999 - demo.money"
     message["From"] = "Synthetic Asset Team <asset@example.invalid>"
     message["To"] = "Synthetic User <demo.money@example.invalid>"
     message["Date"] = "Thu, 13 Aug 2026 03:49:56 +0000"
     message["Message-ID"] = "<synthetic-invalid-money@example.invalid>"
     message.set_content(
         "Người quản lý thiết bị: demo.money\n"
-        "Mã thiết bị: DEMO-MOU-999\n"
+        "Mã thiết bị: MOU16999\n"
         "Phí đền bù trách nhiệm khi mất thiết bị.\n"
         f"Total:\n{token}\n2\n3"
     )
@@ -323,6 +323,47 @@ def test_oracle_bip_upload_derives_domain_from_supplier_name_not_employee_number
     assert "vg-15277" not in directory
 
 
+def test_supplier_pair_over_20k_rows_roundtrips_and_enriches_email(
+    upload_app: Flask,
+) -> None:
+    """The trusted merged directory may contain up to two source files of rows."""
+
+    active_rows = [
+        (f"bulk.active.{index}", f"A{index:05d}", "01", "Synthetic Active")
+        for index in range(10_001)
+    ]
+    inactive_rows = [
+        (f"bulk.inactive.{index}", f"I{index:05d}", "02", "Synthetic Inactive")
+        for index in range(10_001)
+    ]
+    client = upload_app.test_client()
+
+    supplier = _upload_supplier_pair(
+        client,
+        _supplier_csv(active_rows),
+        _supplier_csv(inactive_rows),
+    )
+    email = _upload_emails(
+        client,
+        [
+            (
+                _damaged_eml(
+                    "bulk.active.0",
+                    message_id="synthetic-large-directory@example.invalid",
+                ),
+                "synthetic.eml",
+            )
+        ],
+    )
+
+    assert supplier.status_code == 201
+    assert supplier.get_json()["total_count"] == 20_002
+    assert email.status_code == 200
+    assert email.get_json()["ingested"] == 1
+    case = client.get(f"/api/cases/{email.get_json()['case_ids'][0]}").get_json()["case"]
+    assert case["supplier_number"] == "A00000"
+
+
 def test_supplier_upload_supports_real_xlsx_content(upload_app: Flask) -> None:
     response = _upload_supplier_pair(
         upload_app.test_client(),
@@ -358,6 +399,35 @@ def test_supplier_upload_rejects_xlsx_active_content(upload_app: Flask) -> None:
 
     assert response.status_code == 400
     assert "active or embedded content" in response.get_json()["error"]
+
+
+def test_supplier_upload_rejects_xlsx_external_relationship(upload_app: Flask) -> None:
+    source = io.BytesIO(_supplier_xlsx([("demo.xlsx", "1", "01", "Person")]))
+    modified = io.BytesIO()
+    with zipfile.ZipFile(source) as original, zipfile.ZipFile(modified, "w") as target:
+        for item in original.infolist():
+            target.writestr(item, original.read(item.filename))
+        target.writestr(
+            "xl/worksheets/_rels/sheet1.xml.rels",
+            b"""<?xml version="1.0" encoding="UTF-8"?>
+            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+              <Relationship Id="rId99" Type="synthetic" Target="https://example.invalid/"
+                            TargetMode="External" />
+            </Relationships>""",
+        )
+
+    response = _upload_supplier_pair(
+        upload_app.test_client(),
+        modified.getvalue(),
+        _supplier_xlsx([("demo.old", "2", "02", "Old")]),
+        active_name="active.xlsx",
+        inactive_name="inactive.xlsx",
+        active_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        inactive_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    assert response.status_code == 400
+    assert "external relationship" in response.get_json()["error"]
 
 
 def test_failed_supplier_replacement_leaves_previous_version_active(upload_app: Flask) -> None:

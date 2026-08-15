@@ -17,7 +17,20 @@ const EMPTY_DASHBOARD = Object.freeze({
   issues: [],
   batches: [],
   summary: null,
-  capabilities: { test_reset: false, demo_reset: false },
+  retained_source_count: 0,
+  capabilities: {
+    test_reset: false,
+    demo_reset: false,
+    raw_eml_retention: false,
+    source_eml_download: false,
+    tran_reference_upload: false,
+    tran_lookup: false,
+    tran_workbook_export: false,
+    tran_draft: false,
+    mail_pdf_individual: false,
+    mail_pdf_batch: false,
+    mail_pdf_backend: null,
+  },
 });
 const DEFAULT_SORT = Object.freeze({ field: "received_at", direction: "desc" });
 
@@ -49,11 +62,14 @@ export default function App() {
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchCases, setBatchCases] = useState([]);
   const [initialBatchName, setInitialBatchName] = useState("");
+  const [initialInvoiceStart, setInitialInvoiceStart] = useState(1);
   const [clearingTestData, setClearingTestData] = useState(false);
   const [testDataClearVersion, setTestDataClearVersion] = useState(0);
   const [resetting, setResetting] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
+  const [mailPdfBusyHandle, setMailPdfBusyHandle] = useState("");
+  const [mailPdfDownloads, setMailPdfDownloads] = useState({});
   const [toasts, setToasts] = useState([]);
   const requestId = useRef(0);
   const abortRef = useRef(null);
@@ -128,8 +144,9 @@ export default function App() {
     setFilters((current) => ({ ...current, ...patch }));
   }
 
-  function openBatch(batchName, cases) {
+  function openBatch(batchName, cases, invoiceStart = 1) {
     setInitialBatchName(batchName);
+    setInitialInvoiceStart(invoiceStart);
     setBatchCases(cases);
     setBatchOpen(true);
   }
@@ -156,11 +173,12 @@ export default function App() {
     const result = await dashboardApi.uploadEmails(files, { signal, onProgress });
     const ingested = toNumber(result?.ingested ?? result?.created ?? result?.count);
     const warningCount = Array.isArray(result?.warnings) ? result.warnings.length : 0;
+    const skippedCount = Array.isArray(result?.skipped_files) ? result.skipped_files.length : 0;
     const unknownCount = Array.isArray(result?.unknown_files) ? result.unknown_files.length : 0;
     pushToast(
-      warningCount || unknownCount ? "Nạp email có cảnh báo" : "Nạp email hoàn tất",
-      `${numberFormatter.format(ingested)} hồ sơ · ${numberFormatter.format(unknownCount)} file không nạp được · ${numberFormatter.format(warningCount)} cảnh báo.`,
-      warningCount || unknownCount ? "warning" : "success",
+      warningCount || skippedCount || unknownCount ? "Nạp email có cảnh báo" : "Nạp email hoàn tất",
+      `${numberFormatter.format(ingested)} hồ sơ · ${numberFormatter.format(skippedCount)} file bỏ qua theo rule · ${numberFormatter.format(unknownCount)} file không nạp được · ${numberFormatter.format(warningCount)} cảnh báo.`,
+      warningCount || skippedCount || unknownCount ? "warning" : "success",
     );
     await loadDashboard({ quiet: true });
     return result;
@@ -172,6 +190,8 @@ export default function App() {
     try {
       await dashboardApi.reset();
       setActiveCaseId(null);
+      setMailPdfDownloads({});
+      setTestDataClearVersion((current) => current + 1);
       pushToast("Đã đặt lại demo", "Dữ liệu mẫu đã được khôi phục.", "success");
       await loadDashboard({ quiet: true });
     } catch (error) {
@@ -192,6 +212,7 @@ export default function App() {
       setActiveCaseId(null);
       setBatchOpen(false);
       setBatchCases([]);
+      setMailPdfDownloads({});
       setTestDataClearVersion((current) => current + 1);
       pushToast(
         "Đã xóa dữ liệu test",
@@ -223,12 +244,13 @@ export default function App() {
     }
   }
 
-  async function createBatch(batchName, cases) {
+  async function createBatch(batchName, cases, invoiceStart) {
     setBatchBusy(true);
     try {
       const result = await dashboardApi.createBatch(
         batchName,
         cases.map((item) => item.api_id),
+        invoiceStart,
       );
       setBatchOpen(false);
       pushToast(
@@ -241,6 +263,36 @@ export default function App() {
       pushToast("Không tạo được batch", error.message, "error");
     } finally {
       setBatchBusy(false);
+    }
+  }
+
+  async function createCaseMailPdf(caseItem) {
+    const handle = caseItem?.source_eml?.handle;
+    if (!handle || mailPdfBusyHandle) return { result: null, error: null };
+    setMailPdfBusyHandle(handle);
+    try {
+      const result = await dashboardApi.createIndividualMailPdf(handle);
+      if (result.download_url) {
+        setMailPdfDownloads((current) => ({
+          ...current,
+          [handle]: result.download_url,
+        }));
+      }
+      pushToast(
+        translate(language, "pdfToastReadyTitle"),
+        translate(language, "pdfIndividualReady"),
+        "success",
+      );
+      return { result, error: null };
+    } catch (error) {
+      pushToast(
+        translate(language, "pdfToastErrorTitle"),
+        error.message,
+        "error",
+      );
+      return { result: null, error };
+    } finally {
+      setMailPdfBusyHandle("");
     }
   }
 
@@ -313,7 +365,11 @@ export default function App() {
                 language={language}
                 refreshing={refreshing}
                 statusBusy={statusBusy}
+                mailPdfBusyHandle={mailPdfBusyHandle}
+                mailPdfCapabilities={dashboard.capabilities}
+                mailPdfDownloads={mailPdfDownloads}
                 onFiltersChange={updateFilters}
+                onCreateMailPdf={createCaseMailPdf}
                 onOpen={setActiveCaseId}
                 onRefresh={() => loadDashboard()}
                 onUpdateStatus={updateCaseStatus}
@@ -326,10 +382,13 @@ export default function App() {
                 cases={dashboard.cases}
                 clearingTestData={clearingTestData}
                 language={language}
+                mailPdfBusyHandle={mailPdfBusyHandle}
+                mailPdfDownloads={mailPdfDownloads}
                 resetting={resetting}
                 statusBusy={statusBusy}
                 testDataClearVersion={testDataClearVersion}
                 onEmailUpload={uploadEmails}
+                onCreateMailPdf={createCaseMailPdf}
                 onClearTestData={clearTestData}
                 onOpenBatch={openBatch}
                 onOpenCase={setActiveCaseId}
@@ -339,7 +398,14 @@ export default function App() {
               />
             </section>
             <section className={`tab-content ${activeTab === "tran" ? "active" : ""}`}>
-              <TranWorkspace cases={dashboard.cases} language={language} />
+              <TranWorkspace
+                capabilities={dashboard.capabilities}
+                cases={dashboard.cases}
+                language={language}
+                onEmailUpload={uploadEmails}
+                onReferencesChanged={() => loadDashboard({ quiet: true })}
+                testDataClearVersion={testDataClearVersion}
+              />
             </section>
           </>
         )}
@@ -356,6 +422,7 @@ export default function App() {
         cases={batchCases}
         busy={batchBusy}
         initialBatchName={initialBatchName}
+        initialInvoiceStart={initialInvoiceStart}
         onClose={() => setBatchOpen(false)}
         onCreate={createBatch}
       />
