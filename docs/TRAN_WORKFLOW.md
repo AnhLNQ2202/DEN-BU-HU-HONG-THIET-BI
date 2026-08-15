@@ -166,6 +166,15 @@ is appended as escaped visible text capped at 100,000 characters; active HTML, f
 events and remote resources are discarded. Sending remains a separate, explicitly authorized
 action and is not implemented here.
 
+The web workspace offers one shared multi-case selector across Information, Results, and Export &
+Draft. It selects whole source-email groups, supports search and select-all, and refuses an
+all-or-nothing selection above 100 assets. Resolve and workbook export may combine the selected
+groups. Draft creation always partitions them back into one sequential request and one unsent
+draft per original retained email; the exact 15-column mail template and operator-supplied
+introduction contract above are unchanged. Confirmed successful source requests are not repeated
+unchanged in the current browser session. Network/server outcomes that may already have created a
+draft are labeled uncertain and require an explicit check-and-confirm step before retry.
+
 ## Current external-data gap
 
 No operational CCDC workbook containing `Define`, `CMDB`, and `BC Xuatkho` is present in the

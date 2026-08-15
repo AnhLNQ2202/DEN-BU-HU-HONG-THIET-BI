@@ -130,11 +130,15 @@ def _lost_table_email(*, same_domain: bool = False) -> bytes:
     return message.as_bytes()
 
 
-def _asset() -> dict[str, object]:
+def _asset(
+    tag_number: str = "MOU10001",
+    asset_name: str = "Synthetic mouse",
+    domain: str = "demo.user",
+) -> dict[str, object]:
     return {
-        "tag_number": "MOU10001",
-        "asset_name": "Synthetic mouse",
-        "domain": "demo.user",
+        "tag_number": tag_number,
+        "asset_name": asset_name,
+        "domain": domain,
         "lost_date": "2026-01-01",
     }
 
@@ -307,6 +311,68 @@ def test_resolve_export_and_download_use_bundled_clean_template(tmp_path: Path) 
             workbook.close()
         assert client.post("/api/tran/drafts", json={}).status_code == 503
         assert client.post("/api/mail-pdfs/individual", json={}).status_code == 503
+    finally:
+        app.extensions["asset_hub"]["repository"].close()
+
+
+def test_multi_asset_resolve_and_workbook_preserve_request_order(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    try:
+        _upload_fa(app)
+        client = app.test_client()
+        assets = [
+            _asset("MON10002", "Synthetic Monitor", "demo.monitor"),
+            _asset("MOU10001", "Synthetic Mouse", "demo.mouse"),
+            _asset("LAP10001", "Synthetic Laptop", "demo.laptop"),
+        ]
+        expected_tags = [item["tag_number"] for item in assets]
+
+        resolved = client.post("/api/tran/resolve", json={"assets": assets})
+        exported = client.post(
+            "/api/tran/workbooks",
+            json={"assets": assets, "processing_date": "2026-01-15"},
+        )
+
+        assert resolved.status_code == 200
+        resolved_payload = resolved.get_json()
+        assert resolved_payload["count"] == 3
+        assert resolved_payload["ready"] is True
+        assert [
+            item["asset"]["tag_number"] for item in resolved_payload["results"]
+        ] == expected_tags
+
+        assert exported.status_code == 201
+        assert exported.get_json()["asset_count"] == 3
+        download = client.get(exported.get_json()["download_url"])
+        assert download.status_code == 200
+        workbook = load_workbook(io.BytesIO(download.data), data_only=False)
+        try:
+            assert [workbook["2026"].cell(row, 4).value for row in range(4, 7)] == expected_tags
+            assert [
+                workbook["Sent out"].cell(row, 1).value for row in range(2, 5)
+            ] == expected_tags
+        finally:
+            workbook.close()
+            download.close()
+    finally:
+        app.extensions["asset_hub"]["repository"].close()
+
+
+def test_tran_request_limit_accepts_100_and_rejects_101(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    try:
+        _upload_fa(app)
+        client = app.test_client()
+        assets = [_asset() for _ in range(100)]
+
+        accepted = client.post("/api/tran/resolve", json={"assets": assets})
+        rejected = client.post("/api/tran/resolve", json={"assets": [*assets, _asset()]})
+
+        assert accepted.status_code == 200
+        assert accepted.get_json()["count"] == 100
+        assert len(accepted.get_json()["results"]) == 100
+        assert rejected.status_code == 400
+        assert "more than 100 assets" in rejected.get_json()["error"]
     finally:
         app.extensions["asset_hub"]["repository"].close()
 
