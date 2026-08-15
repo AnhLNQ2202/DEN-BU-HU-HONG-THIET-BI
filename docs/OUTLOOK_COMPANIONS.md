@@ -60,14 +60,19 @@ Product”. Add-in không đi lục cả hộp thư.
 3. Bạn nhập mã ghép đôi của đúng phân hệ NganTLT hoặc TranNNB.
 4. Bạn bấm **Đưa email này vào Product**.
 5. Add-in chỉ lấy mail đang mở và Product tạo case như luồng upload EML
-   hiện có.
-6. Nếu là NganTLT, bạn tiếp tục review và làm hạch toán trên Product.
-7. Nếu là TranNNB, bạn resolve dữ liệu và bấm **Đưa draft sang Add-in /
+   hiện có. File nguồn được đặt tên theo tiêu đề mail đã làm sạch, không còn
+   tên chung `current-email.eml`.
+6. Add-in ghi dấu riêng **Đã xử lý** lên đúng Outlook item. Khi mở lại mail,
+   task pane đọc dấu này và nút đổi thành **Nạp lại email này (Product sẽ chống
+   trùng)**. Dù dấu Outlook không lưu được, Product vẫn dùng Message-ID + hash
+   nội dung để không tạo hồ sơ trùng.
+7. Nếu là NganTLT, bạn tiếp tục review và làm hạch toán trên Product.
+8. Nếu là TranNNB, bạn resolve dữ liệu và bấm **Đưa draft sang Add-in /
    Bridge** trên Product.
-8. Add-in chỉ nhận draft khớp với đúng mail đang mở. Bạn bấm **Mở
+9. Add-in chỉ nhận draft khớp với đúng mail đang mở. Bạn bấm **Mở
    Reply All + workbook**.
-9. Outlook mở cửa sổ trả lời, chèn nội dung và đính workbook.
-10. Bạn đọc lại người nhận, nội dung và file. Chỉ bạn mới có thể
+10. Outlook mở cửa sổ trả lời, chèn nội dung và đính workbook.
+11. Bạn đọc lại người nhận, nội dung và file. Chỉ bạn mới có thể
     bấm **Send**.
 
 ### Link tải trên Product
@@ -113,6 +118,8 @@ Có thể mở trang sideload Outlook của Microsoft tại
 - Nội dung draft Add-in bị chặn ở 32 KiB và workbook ở 25 MiB.
 - Mã ghép đôi, token và bản ánh xạ mail chỉ nằm trong `sessionStorage`
   của task pane. Đóng/mở lại, hết hạn hoặc reset có thể phải ghép lại.
+- Dấu **Đã xử lý** là Custom Property riêng của Add-in trên Outlook item. Nó
+  không đổi Subject, không tạo category màu và không hiện cho người nhận.
 - Tenant có thể chặn custom add-in. Đây là chính sách Outlook, không phải
   quyền Microsoft Graph.
 

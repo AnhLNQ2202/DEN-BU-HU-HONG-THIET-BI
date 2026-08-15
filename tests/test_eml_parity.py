@@ -132,6 +132,66 @@ def _initial_lost_notice_message(
     return message.as_bytes()
 
 
+def _typed_initial_lost_notice_message() -> bytes:
+    message = EmailMessage()
+    message["Subject"] = "Thất lạc thiết bị - demo.user7 - nhân viên đang làm việc"
+    message["From"] = "Synthetic Asset Team <asset@example.invalid>"
+    message["To"] = "Synthetic User <demo.user7@example.invalid>"
+    message["Date"] = "Fri, 14 Aug 2026 03:24:00 +0000"
+    message["Message-ID"] = "<typed-initial-loss@example.invalid>"
+    message.set_content("Synthetic typed initial loss notice follows.")
+    message.add_alternative(
+        """
+        <html><body>
+          <p>Người quản lý thiết bị: demo.user7</p>
+          <table>
+            <tr>
+              <th>Loại thiết bị</th><th>Tên thiết bị</th>
+              <th>Mã thiết bị</th><th>Tình trạng</th><th>Ghi chú</th>
+            </tr>
+            <tr>
+              <td>Mouse</td><td>Synthetic Wireless Mouse</td>
+              <td>DEMO-MOU-701</td><td>Thất lạc</td><td></td>
+            </tr>
+          </table>
+        </body></html>
+        """,
+        subtype="html",
+    )
+    return message.as_bytes()
+
+
+def _dated_initial_lost_notice_message() -> bytes:
+    message = EmailMessage()
+    message["Subject"] = (
+        "IT - Thông báo về việc mất thiết bị của nhân viên đã nghỉ việc - demo.former7"
+    )
+    message["From"] = "Synthetic Asset Team <asset@example.invalid>"
+    message["To"] = "Synthetic Former User <demo.former7@example.invalid>"
+    message["Date"] = "Fri, 7 Aug 2026 08:44:00 +0000"
+    message["Message-ID"] = "<dated-initial-loss@example.invalid>"
+    message.set_content("Synthetic dated initial loss notice follows.")
+    message.add_alternative(
+        """
+        <html><body>
+          <p>Người quản lý thiết bị: demo.former7</p>
+          <table>
+            <tr>
+              <th>Loại thiết bị</th><th>Tên thiết bị</th><th>Mã thiết bị</th>
+              <th>Thời gian mất</th><th>Chi phí đầu tư ban đầu</th>
+            </tr>
+            <tr>
+              <td>Cable converter</td><td>Synthetic USB-C adapter</td>
+              <td>DEMO-CAB-717</td><td>07-08-2026</td><td>1,313,000</td>
+            </tr>
+          </table>
+        </body></html>
+        """,
+        subtype="html",
+    )
+    return message.as_bytes()
+
+
 def _initial_lost_notice_with_invalid_second_row() -> bytes:
     message = EmailMessage()
     message["Subject"] = (
@@ -290,6 +350,59 @@ def test_initial_lost_notice_table_preserves_asset_names_and_rows() -> None:
             "source_note": "Second item",
         },
     ]
+
+
+def test_initial_lost_notice_with_device_type_uses_table_code_not_domain() -> None:
+    case = EmlParser().parse_bytes_many(_typed_initial_lost_notice_message())[0]
+
+    assert case.case_type == "LOST"
+    assert case.domain == "demo.user7"
+    assert case.asset_code == "DEMO-MOU-701"
+    assert case.asset_name == "Synthetic Wireless Mouse"
+    assert case.metadata["asset_rows"] == [
+        {
+            "asset_code": "DEMO-MOU-701",
+            "asset_name": "Synthetic Wireless Mouse",
+            "asset_type": "Mouse",
+            "domain": "demo.user7",
+            "reported_status": "Thất lạc",
+            "source_note": "",
+        }
+    ]
+
+
+def test_initial_lost_notice_with_loss_date_preserves_name_date_and_cost() -> None:
+    case = EmlParser().parse_bytes_many(_dated_initial_lost_notice_message())[0]
+
+    assert case.case_type == "LOST"
+    assert case.domain == "demo.former7"
+    assert case.asset_code == "DEMO-CAB-717"
+    assert case.asset_name == "Synthetic USB-C adapter"
+    assert case.metadata["asset_rows"] == [
+        {
+            "asset_code": "DEMO-CAB-717",
+            "asset_name": "Synthetic USB-C adapter",
+            "asset_type": "Cable converter",
+            "domain": "demo.former7",
+            "loss_date": "07-08-2026",
+            "original_value": Decimal("1313000"),
+        }
+    ]
+
+
+def test_fallback_never_uses_the_employee_domain_as_the_asset_code() -> None:
+    case = EmlParser().parse_bytes(
+        _message(
+            "Thất lạc thiết bị - demo.user7 - nhân viên đang làm việc",
+            "Người quản lý thiết bị: demo.user7",
+            message_id="domain-is-not-an-asset@example.invalid",
+        )
+    )
+
+    assert case.case_type == "LOST"
+    assert case.domain == "demo.user7"
+    assert case.asset_code == ""
+    assert "missing_asset_code" in case.warnings
 
 
 def test_initial_lost_notice_parser_does_not_guess_on_a_different_schema() -> None:

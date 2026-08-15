@@ -17,6 +17,10 @@ const STORAGE = Object.freeze({
   itemSources: "asset-hub.addin.item-sources",
 });
 
+const ITEM_PROPERTIES = Object.freeze({
+  processed: "assetHubProcessedV1",
+});
+
 const LIMITS = Object.freeze({
   apiResponseCharacters: 2 * 1024 * 1024,
   draftPackageResponseCharacters: 37 * 1024 * 1024,
@@ -33,6 +37,7 @@ const LIMITS = Object.freeze({
 const state = {
   officeReady: false,
   itemKey: null,
+  itemProcessed: false,
   artifactHandle: null,
   token: null,
   identity: null,
@@ -122,6 +127,7 @@ function updateCurrentItem() {
   const item = Office.context?.mailbox?.item;
   if (!item) {
     state.itemKey = null;
+    state.itemProcessed = false;
     state.artifactHandle = null;
     state.packages = [];
     elements.currentSubject.textContent = "Hãy mở một email báo mất hoặc hư hỏng.";
@@ -130,12 +136,14 @@ function updateCurrentItem() {
   }
 
   state.itemKey = itemKeyFor(item);
+  state.itemProcessed = false;
   state.artifactHandle = state.itemKey ? uniqueMappedHandleForItem(state.itemKey) : null;
   state.packages = [];
 
   const subject = typeof item.subject === "string" ? item.subject.trim() : "";
   elements.currentSubject.textContent = truncateText(subject || "Email không có tiêu đề", 240);
   render();
+  refreshProcessedMarker(item, state.itemKey);
 
   if (state.artifactHandle && state.identity?.role === "tran") {
     refreshDraftPackages(true);
@@ -221,7 +229,7 @@ async function uploadCurrentEmail() {
       label: "Email",
     });
     const formData = new FormData();
-    formData.append("file", emlBlob, "current-email.eml");
+    formData.append("file", emlBlob, outlookEmlFilename(sourceItem?.subject));
 
     const response = await requestJson(
       API.uploadEmail,
@@ -241,9 +249,15 @@ async function uploadCurrentEmail() {
 
     storeItemSourceMapping(operationItemKey, handle);
     if (isCurrentItemBinding(operationItemKey, handle)) {
+      const markerSaved = await markItemProcessed(sourceItem, operationItemKey);
       state.artifactHandle = handle;
       state.packages = [];
-      showStatus("Email đang mở đã được nạp vào Product.", "success");
+      showStatus(
+        markerSaved
+          ? "Email đã được nạp và đánh dấu Đã xử lý. Product tự chống tạo hồ sơ trùng."
+          : "Email đã được nạp. Outlook chưa lưu được dấu, nhưng Product vẫn tự chống tạo hồ sơ trùng.",
+        markerSaved ? "success" : "warning",
+      );
       render();
       if (state.identity.role === "tran") {
         await refreshDraftPackages(true);
@@ -288,6 +302,68 @@ function getEmailAsBase64(item) {
       resolve(result.value);
     });
   });
+}
+
+function loadItemCustomProperties(item) {
+  return new Promise((resolve, reject) => {
+    if (!item || typeof item.loadCustomPropertiesAsync !== "function") {
+      reject(new Error("Outlook không hỗ trợ dấu xử lý cho email này."));
+      return;
+    }
+    item.loadCustomPropertiesAsync((result) => {
+      if (result.status !== Office.AsyncResultStatus.Succeeded || !result.value) {
+        reject(new Error(result.error?.message || "Outlook không đọc được dấu xử lý."));
+        return;
+      }
+      resolve(result.value);
+    });
+  });
+}
+
+function saveItemCustomProperties(properties) {
+  return new Promise((resolve, reject) => {
+    properties.saveAsync((result) => {
+      if (result.status !== Office.AsyncResultStatus.Succeeded) {
+        reject(new Error(result.error?.message || "Outlook không lưu được dấu xử lý."));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function refreshProcessedMarker(item, itemKey) {
+  if (!itemKey) {
+    return;
+  }
+  try {
+    const properties = await loadItemCustomProperties(item);
+    const processed = properties.get(ITEM_PROPERTIES.processed) === "1";
+    if (state.itemKey === itemKey && itemKeyFor(Office.context?.mailbox?.item) === itemKey) {
+      state.itemProcessed = processed;
+      render();
+    }
+  } catch {
+    // The marker is a convenience. Server-side content identity remains authoritative.
+  }
+}
+
+async function markItemProcessed(item, itemKey) {
+  if (!itemKey || itemKeyFor(Office.context?.mailbox?.item) !== itemKey) {
+    return false;
+  }
+  try {
+    const properties = await loadItemCustomProperties(item);
+    properties.set(ITEM_PROPERTIES.processed, "1");
+    await saveItemCustomProperties(properties);
+    if (state.itemKey === itemKey && itemKeyFor(Office.context?.mailbox?.item) === itemKey) {
+      state.itemProcessed = true;
+      render();
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function refreshDraftPackages(silent) {
@@ -632,8 +708,15 @@ function render() {
 
   const canUpload = connected && state.officeReady && Boolean(state.itemKey) && isMailboxSetSupported("1.14");
   elements.uploadButton.disabled = !canUpload;
-  elements.mailBadge.textContent = state.artifactHandle ? "Đã nạp email này" : "Chưa nạp";
-  elements.mailBadge.className = `badge ${state.artifactHandle ? "badge--success" : "badge--muted"}`;
+  elements.uploadButton.textContent = state.itemProcessed
+    ? "Nạp lại email này (Product sẽ chống trùng)"
+    : "Đưa email này vào Product";
+  elements.mailBadge.textContent = state.itemProcessed
+    ? "Đã xử lý"
+    : state.artifactHandle
+      ? "Đã nạp email này"
+      : "Chưa nạp";
+  elements.mailBadge.className = `badge ${state.itemProcessed || state.artifactHandle ? "badge--success" : "badge--muted"}`;
 
   elements.draftPanel.hidden = !connected || state.identity?.role !== "tran";
   elements.refreshButton.disabled = !state.artifactHandle || state.packageRequestRunning;
@@ -758,6 +841,21 @@ function storeItemSourceMapping(itemKey, artifactHandle) {
 function normalizePairingCode(value) {
   const code = typeof value === "string" ? value.trim().toUpperCase() : "";
   return /^[A-Z0-9-]{6,64}$/.test(code) ? code : null;
+}
+
+function outlookEmlFilename(subject) {
+  const value = typeof subject === "string" ? subject : "";
+  const normalized = typeof value.normalize === "function" ? value.normalize("NFKC") : value;
+  const safeStem = Array.from(
+    normalized
+      .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/^[ .]+|[ .]+$/g, ""),
+  )
+    .slice(0, 80)
+    .join("")
+    .trim();
+  return `${safeStem || "outlook-email"}.eml`;
 }
 
 function validateBearerToken(value) {

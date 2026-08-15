@@ -93,6 +93,79 @@ def test_taskpane_enforces_companion_safety_contract() -> None:
     assert "storeItemSourceMapping(operationItemKey, handle)" in javascript
     assert "requireCurrentItemBinding(operationItemKey, operationArtifactHandle)" in javascript
     assert "const currentItem = requireCurrentItemBinding" in javascript
+    assert 'outlookEmlFilename(sourceItem?.subject)' in javascript
+    assert 'processed: "assetHubProcessedV1"' in javascript
+    assert "loadCustomPropertiesAsync" in javascript
+    assert "properties.saveAsync" in javascript
+
+
+def test_taskpane_uses_the_subject_filename_and_persists_a_processed_marker() -> None:
+    node = shutil.which("node")
+    if node is None:
+        return
+    script = ADDIN / "taskpane.js"
+    harness = r"""
+const fs = require("fs");
+const vm = require("vm");
+const propertyValues = new Map();
+const properties = {
+  get(key) { return propertyValues.get(key); },
+  set(key, value) { propertyValues.set(key, value); },
+  saveAsync(callback) { callback({ status: "succeeded" }); },
+};
+const item = {
+  itemId: "mail-A",
+  subject: "  Thất lạc: CAB/01?  ",
+  loadCustomPropertiesAsync(callback) {
+    callback({ status: "succeeded", value: properties });
+  },
+};
+const context = {
+  console,
+  Blob,
+  Uint8Array,
+  JSON,
+  Date,
+  sessionStorage: {
+    getItem() { return null; },
+    setItem() {},
+    removeItem() {},
+  },
+  document: { addEventListener() {}, hidden: false },
+  window: { setTimeout, clearTimeout, setInterval, clearInterval, atob },
+  Office: {
+    AsyncResultStatus: { Succeeded: "succeeded" },
+    context: { mailbox: { item } },
+  },
+};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), context);
+(async () => {
+  const filename = vm.runInContext(
+    "outlookEmlFilename(Office.context.mailbox.item.subject)",
+    context,
+  );
+  if (filename !== "Thất lạc CAB 01.eml") throw new Error(`unexpected filename: ${filename}`);
+  const fallback = vm.runInContext("outlookEmlFilename('   ')", context);
+  if (fallback !== "outlook-email.eml") throw new Error(`unexpected fallback: ${fallback}`);
+  const saved = await vm.runInContext(
+    "markItemProcessed(Office.context.mailbox.item, 'mail-A')",
+    context,
+  );
+  if (!saved || propertyValues.get("assetHubProcessedV1") !== "1") {
+    throw new Error("processed marker was not saved");
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+"""
+    subprocess.run(
+        [node, "-e", harness, str(script)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_taskpane_binding_guard_rejects_an_item_switch() -> None:

@@ -52,18 +52,18 @@ Snapshot hiện tại được cập nhật ngày **2026-08-16**:
 | Hạng mục | Giá trị tại snapshot |
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
-| Branch candidate hiện tại | `agent/tran-parser-outlook-ui` |
-| Base `origin/main` | `b86e1733823badba502da4bf9ac546d89c34082b` |
+| Branch candidate hiện tại | `agent/tran-parser-mail-identity-fix` |
+| Base `origin/main` | `a30b8f292333ebfbc9c51e6690437e09da958c07` |
 | Outlook companion | PR [#7](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/7) đã merge; Add-in/Bridge đã được smoke public assets trên staging |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Candidate local gate | 372 collected = 370 pass + 2 skip; coverage 82%; Ruff/diff-check + production Docker build pass |
+| Candidate local gate | 376 collected = 374 pass + 2 skip; coverage 81%; Ruff/diff-check + production Docker build pass |
 | Frontend candidate | 3 Node contract tests; Vite 51 modules; two builds byte-for-byte stable |
-| Candidate deploy status | Chưa push/CI/deploy tại thời điểm snapshot này; M365 env vẫn chủ động để trống |
+| Candidate deploy status | Kiểm tra GitHub/Render theo exact commit hiện tại; M365 env vẫn chủ động để trống |
 | Release verdict | Local staging gate xanh; phải chờ GitHub CI Docker rồi mới Manual Deploy; chưa phải production multi-user |
 
-Candidate hiện tại thêm bảng LOST ban đầu bốn cột, popup Outlook ở header, một
+Candidate hiện tại thêm các bảng LOST ban đầu được allowlist, popup Outlook ở header, một
 picker cho cặp Supplier và disclosure cho danh sách upload dài. User đã cho phép
 redeploy disposable staging và chấp nhận mất dữ liệu `/tmp`; quyền này chỉ áp
 dụng staging service nêu trên, không mở rộng sang production hay thay env/plan.
@@ -538,12 +538,16 @@ hiện có; chưa có automatic TTL deletion.
 - Parser decode subject, chọn bounded plain/HTML, hỗ trợ nhiều DAMAGED record và
   nhiều LOST table row/group theo domain. MOU asset prefix vẫn hợp lệ; chỉ mail
   standalone marker MOU/technical/no-compensation mới bị skip có reason.
-- Với thông báo LOST ban đầu có đúng bảng bốn cột `Tên thiết bị | Mã thiết bị |
-  Tình trạng | Ghi chú`, parser map từng dòng `Thất lạc`/`Mất` thành
-  `metadata.asset_rows`, giữ tên và mã tài sản theo thứ tự. Khi đã nhận diện đúng
-  schema, chỉ một dòng thiếu tên/sai mã/sai trạng thái cũng làm **reject toàn
-  bảng**; không được âm thầm bỏ dòng rồi xử lý thiếu tài sản. Bảng financial đầy
-  đủ vẫn có độ ưu tiên cao hơn bảng thông báo ban đầu.
+- Với thông báo LOST ban đầu, parser chỉ nhận ba schema exact: bảng bốn cột
+  `Tên thiết bị | Mã thiết bị | Tình trạng | Ghi chú`; cùng bảng đó có thêm
+  `Loại thiết bị`; hoặc bảng năm cột `Loại thiết bị | Tên thiết bị | Mã thiết bị |
+  Thời gian mất | Chi phí đầu tư ban đầu`. Parser map từng dòng thành
+  `metadata.asset_rows`, giữ tên/mã/type/ngày/chi phí nguồn theo thứ tự. Domain
+  nhân viên bị loại khỏi danh sách ứng viên tag, nên token như `demo.user7` không
+  thể bị dùng làm mã tài sản. Khi đã nhận diện đúng schema, chỉ một dòng thiếu
+  tên/sai mã/sai trạng thái/ngày nguồn malformed cũng làm **reject toàn bảng**;
+  không âm thầm xử lý thiếu tài sản. Bảng financial đầy đủ vẫn có độ ưu tiên cao
+  hơn bảng thông báo ban đầu.
 - Whole-VND parsing là exact; fractional, malformed hoặc vượt giới hạn bị reject,
   không round.
 - Message-ID được hash; cùng ID nhưng khác content buộc review thay vì overwrite.
@@ -1437,7 +1441,8 @@ Regression mới của working tree bao phủ:
   deterministic six-file ZIP/no placeholder/secret, Basic-protected downloads và
   chín exact public task-pane/icon assets có scoped Office CSP/frame policy.
 - Add-in tests kiểm `ReadItem`, Mailbox 1.14/1.15, official Office.js, current-item
-  EML, `sessionStorage`, exact handle, bounded body/workbook/Base64 và không send.
+  EML, filename theo Subject, item-level Custom Property `Đã xử lý`,
+  `sessionStorage`, exact handle, bounded body/workbook/Base64 và không send.
   Bridge tests kiểm minimized no-attachment EML, 30-day/20-mail repeat-to-drain,
   two-role pairing nhưng Tran-only draft poll, safe body/workbook, exact COM
   `ReplyAll`/`Save`/`Display` và AST không có Send member.
@@ -1480,20 +1485,28 @@ deploy. Commit tài liệu bàn giao có thể nằm sau implementation commit n
 luôn dùng `git rev-parse HEAD` và trạng thái PR/CI hiện tại thay vì giả định SHA
 trong tài liệu là HEAD bất biến.
 
-**Follow-up parser/UI candidate evidence (local, 16/08/2026; trước push/deploy):**
+**Follow-up parser/UI/mail-identity candidate evidence (local, 16/08/2026):**
 
-- parser hỗ trợ exact bảng LOST ban đầu bốn cột, giữ multi-asset order/name/tag
-  và fail closed toàn bảng khi có một dòng sai; parser không ghi `loss_date` từ
-  RFC mail date, frontend giữ ngày nguồn hoặc dùng local today theo rule gốc;
+- parser hỗ trợ ba exact schema LOST ban đầu được allowlist, giữ
+  multi-asset order/name/tag/type/ngày/chi phí nguồn và fail closed toàn bảng
+  khi có một dòng sai; domain không thể bị nhầm thành tag. Frontend giữ
+  ngày nguồn khi mail có, nếu không có thì dùng local today theo rule gốc;
+- Add-in đặt safe source filename theo Subject, ghi Custom Property `Đã xử lý`
+  lên exact Outlook item sau upload và vẫn dựa vào Message-ID + content hash
+  phía server làm chốt chống hồ sơ trùng;
 - Outlook controls đã chuyển khỏi hai workspace vào modal chung cạnh language;
   Supplier UI dùng một picker đúng hai file và filename-based role detection;
   danh sách file/case/warning dài đóng mặc định;
-- full pytest: 372 collected = 370 passed + 2 expected platform skips; coverage
-  82%; focused parser/upload/Tran/companion/Add-in gate: 64 passed; frontend Node
-  contract: 3 passed; Ruff toàn repo và `git diff --check` pass;
+- full pytest: 376 collected = 374 passed + 2 expected platform skips; coverage
+  81%; focused TranNNB/parser/workbook/mail/API/companion gate: 196 passed;
+  frontend Node contract: 3 passed; Ruff toàn repo và `git diff --check` pass;
 - Vite 5.4.14 production build pass 51 modules và regenerate tracked dist;
 - production Docker build local pass bằng Docker Desktop Linux engine; image
-  candidate `asset-compensation-hub:parser-ui-candidate` được đóng gói thành công;
+  candidate `asset-compensation-hub:tran-mail-identity-fix` đóng gói thành
+  công; container smoke pass `/api/health` 200 và root không Basic Auth 401;
+- UAT read-only trên hai mail forward thực tế trong folder test Outlook xác
+  nhận cả schema status và schema dated đều map đúng domain/tag/tên tài
+  sản; bản EML tạm đã xóa và không file/dòng dữ liệu thật nào vào Git;
 - NganTLT chỉ được audit bằng **5 EML gốc local**, không có mẫu trong mailbox
   NganTLT để UAT. Cả 5 đi qua exact Add-in companion upload route, bytes retained
   khớp input và sinh đúng aggregate 3 DAMAGED + 2 LOST không warning. Đây không
