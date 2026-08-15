@@ -51,6 +51,8 @@ asset_compensation = [
   "web/static/dist/*.html",
   "web/static/dist/assets/*",
   "templates/*.xlsx",
+  "integrations/outlook_addin/*",
+  "integrations/local_bridge/*",
 ]
 
 [tool.pytest.ini_options]

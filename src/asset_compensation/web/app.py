@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import importlib.util
 import os
+import re
 import secrets
 from threading import RLock
 from typing import Any
@@ -34,6 +35,11 @@ from asset_compensation.services import (
     PREPAYMENT_POLICY,
     AccountingPolicyResolver,
     CaseService,
+    CompanionAuthenticationError,
+    CompanionAuthorizationError,
+    CompanionPackageError,
+    CompanionPackageNotFoundError,
+    CompanionService,
     CompensationService,
     M365ConnectionService,
     M365MailSyncService,
@@ -56,6 +62,33 @@ from asset_compensation.services.tran_reference_upload_service import (
 )
 
 from .routes import blueprint
+
+_COMPANION_BEARER_PATH_RE = re.compile(
+    r"/api/companion/client/draft-packages/[0-9a-f]{32}(?:/ack)?"
+)
+_OUTLOOK_ADDIN_PUBLIC_PATHS = frozenset(
+    {
+        "/outlook-addin/logo.png",
+        "/outlook-addin/logo-16.png",
+        "/outlook-addin/logo-32.png",
+        "/outlook-addin/logo-64.png",
+        "/outlook-addin/logo-80.png",
+        "/outlook-addin/logo-128.png",
+        "/outlook-addin/taskpane.css",
+        "/outlook-addin/taskpane.html",
+        "/outlook-addin/taskpane.js",
+    }
+)
+_OUTLOOK_ADDIN_CSP = (
+    "default-src 'none'; "
+    "script-src 'self' https://appsforoffice.microsoft.com; "
+    "connect-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "object-src 'none'; base-uri 'none'; form-action 'none'; "
+    "frame-ancestors https://outlook.office.com https://outlook.office365.com "
+    "https://outlook.live.com https://outlook.cloud.microsoft "
+    "https://outlook-sdf.office.com https://outlook-sdf.office365.com "
+    "https://*.office.com https://*.microsoft365.com https://*.cloud.microsoft"
+)
 
 
 def create_app(settings: Settings | None = None) -> Flask:
@@ -140,6 +173,7 @@ def create_app(settings: Settings | None = None) -> Flask:
         "settings": settings,
         "repository": repository,
         "case_service": service,
+        "companion_service": CompanionService(),
         "compensation_service": CompensationService(),
         "accounting_policy_resolver": accounting_policy_resolver,
         "mutation_lock": RLock(),
@@ -176,10 +210,18 @@ def create_app(settings: Settings | None = None) -> Flask:
         # credentials. This one callback remains guarded by its opaque session
         # cookie plus short-lived, one-time MSAL state; all other M365 routes
         # still require the shared staging gate when it is configured.
-        if not settings.access_user or request.path in {
-            "/api/health",
-            "/api/m365/callback",
-        }:
+        companion_unauthenticated = request.path == "/api/companion/exchange"
+        companion_bearer = request.path in {
+            "/api/companion/client/emails",
+            "/api/companion/client/draft-packages",
+        } or _COMPANION_BEARER_PATH_RE.fullmatch(request.path) is not None
+        if (
+            not settings.access_user
+            or request.path in {"/api/health", "/api/m365/callback"}
+            or request.path in _OUTLOOK_ADDIN_PUBLIC_PATHS
+            or companion_unauthenticated
+            or companion_bearer
+        ):
             return None
         auth = request.authorization
         valid = bool(
@@ -203,9 +245,21 @@ def create_app(settings: Settings | None = None) -> Flask:
             "default-src 'self'; img-src 'self' data:; "
             "style-src 'self'; script-src 'self'; connect-src 'self'",
         )
-        if request.path.startswith("/api/m365/") or request.path == ("/api/tran/outlook-drafts"):
+        if (
+            request.path.startswith("/api/m365/")
+            or request.path.startswith("/api/companion/")
+            or request.path in {
+                "/api/tran/outlook-drafts",
+                "/api/tran/companion-drafts",
+            }
+        ):
             response.headers["Cache-Control"] = "private, no-store"
         if request.path == "/api/m365/callback":
+            response.headers["Referrer-Policy"] = "no-referrer"
+        if request.path in _OUTLOOK_ADDIN_PUBLIC_PATHS:
+            response.headers.pop("X-Frame-Options", None)
+            response.headers["Content-Security-Policy"] = _OUTLOOK_ADDIN_CSP
+            response.headers["Cache-Control"] = "no-store"
             response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
@@ -245,6 +299,26 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     @app.errorhandler(M365ServiceError)
     def m365_bad_request(exc: M365ServiceError) -> tuple[Any, int]:
+        return _error(exc, 400)
+
+    @app.errorhandler(CompanionAuthenticationError)
+    def companion_authentication_error(exc: CompanionAuthenticationError) -> tuple[Any, int]:
+        response, status = _error(exc, 401)
+        response.headers["WWW-Authenticate"] = 'Bearer realm="Asset Compensation Companion"'
+        return response, status
+
+    @app.errorhandler(CompanionAuthorizationError)
+    def companion_authorization_error(exc: CompanionAuthorizationError) -> tuple[Any, int]:
+        return _error(exc, 403)
+
+    @app.errorhandler(CompanionPackageNotFoundError)
+    def companion_package_not_found(
+        exc: CompanionPackageNotFoundError,
+    ) -> tuple[Any, int]:
+        return _error(exc, 404)
+
+    @app.errorhandler(CompanionPackageError)
+    def companion_package_error(exc: CompanionPackageError) -> tuple[Any, int]:
         return _error(exc, 400)
 
     @app.errorhandler(413)

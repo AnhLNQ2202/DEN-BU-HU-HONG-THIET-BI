@@ -19,6 +19,9 @@ start with [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
   explicitly selected folder with delegated `Mail.Read`, while TranNNB uses
   `Mail.ReadWrite` so the product can create an unsent Reply-All draft. The app
   never requests `Mail.Send`.
+- When Graph permission is unavailable, offers a current-message Outlook Add-in
+  and an interactive Classic Outlook Local Bridge, both paired per role and both
+  structurally unable to send mail.
 - Previews `LOST` compensation under the TranNNB/IT.POL.01 rules, with an
   explicit `NEEDS_REVIEW` result whenever source data is incomplete or
   ambiguous.
@@ -41,6 +44,7 @@ React dashboard -> Flask JSON API
           -> EML/Supplier parsers
           -> Excel/PDF/RFC822-draft adapters
           -> optional Microsoft Graph folder-sync/draft adapter
+          -> optional no-Graph Office.js Add-in/Classic Outlook Bridge boundary
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for decisions, API contracts and the
@@ -94,6 +98,18 @@ is not a durable background worker. OAuth sessions, selected folders and delta
 cursors currently live in process memory and are lost on restart. Follow
 [docs/MICROSOFT_365.md](docs/MICROSOFT_365.md) for Entra registration, Render
 environment values, permissions and limits.
+
+If Entra/Graph permission is not available, the Product also offers two
+interactive Outlook companions that never send mail: an Office.js Add-in for
+one open message at a time, and a Windows Local Bridge for bounded exact-folder
+scanning in Classic Outlook. Both use a five-minute one-time pairing code; they
+do not need a Graph App Registration or client secret. The Product's NganTLT and
+TranNNB workspaces contain the download buttons and child-simple walkthroughs.
+See [docs/OUTLOOK_COMPANIONS.md](docs/OUTLOOK_COMPANIONS.md) for the user guide,
+option comparison, exact download routes, limitations, security contract and
+troubleshooting. A remote deployment must set its non-secret exact HTTPS origin
+in `ASSET_HUB_PUBLIC_ORIGIN` so the downloaded manifest and Bridge point back to
+the correct Product; local loopback development can leave it unset.
 
 To download source EML, create individual PDFs, or merge mail evidence on a
 trusted local machine, explicitly enable private retention before starting the
@@ -152,7 +168,10 @@ optional Windows COM adapter and should be tested separately on a machine with
 Office installed. The product keeps its downloadable RFC822 `.eml` draft flow.
 When Microsoft 365 is configured, TranNNB can additionally create an
 unsent Reply-All draft in the connected Outlook mailbox and attach the generated
-workbook. There is no Outlook `Display()` automation and no send endpoint.
+workbook. Alternatively, the downloadable Local Bridge can use interactive
+Classic Outlook COM on the user's Windows PC to locate the exact session-local
+source item, call Reply All, save and display the unsent form. That COM code does
+not run on the Flask server and has no send operation; there is no send endpoint.
 
 ## Demo
 

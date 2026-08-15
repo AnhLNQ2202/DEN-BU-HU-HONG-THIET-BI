@@ -205,6 +205,34 @@ function normalizeTranOutlookOutput(raw = {}) {
   };
 }
 
+function normalizeCompanionPairing(raw = {}) {
+  const code = String(raw?.code || "").trim().toUpperCase();
+  const role = ["ngan", "tran"].includes(raw?.role) ? raw.role : "";
+  const clientType = ["outlook_addin", "local_bridge"].includes(raw?.client_type)
+    ? raw.client_type
+    : "";
+  if (!code || !role || !clientType) {
+    throw new Error("Server did not return a valid Outlook pairing code.");
+  }
+  return {
+    code,
+    role,
+    client_type: clientType,
+    expires_in_seconds: Math.max(0, toNumber(raw?.expires_in_seconds)),
+    expires_at: raw?.expires_at || null,
+  };
+}
+
+function normalizeCompanionDraft(raw = {}) {
+  return {
+    ...normalizeTranOutput(raw),
+    package_id: /^[0-9a-f]{32}$/.test(String(raw?.package_id || ""))
+      ? String(raw.package_id)
+      : "",
+    expires_in_seconds: Math.max(0, toNumber(raw?.expires_in_seconds)),
+  };
+}
+
 export function normalizeCase(raw = {}, index = 0) {
   const apiId = raw.id ?? raw.case_id ?? `CASE-${index + 1}`;
   return {
@@ -350,6 +378,10 @@ export function normalizeDashboard(payload) {
       m365_ngan: root.capabilities?.m365_ngan === true,
       m365_tran: root.capabilities?.m365_tran === true,
       tran_outlook_draft: root.capabilities?.tran_outlook_draft === true,
+      companion_pairing: root.capabilities?.companion_pairing === true,
+      outlook_addin: root.capabilities?.outlook_addin === true,
+      local_bridge: root.capabilities?.local_bridge === true,
+      tran_companion_draft: root.capabilities?.tran_companion_draft === true,
       mail_pdf_individual: root.capabilities?.mail_pdf_individual === true,
       mail_pdf_batch: root.capabilities?.mail_pdf_batch === true,
       mail_pdf_backend: ["word-windows", "weasyprint-cloud"].includes(
@@ -562,6 +594,38 @@ export const dashboardApi = {
       ...(yearSheet ? { year_sheet: yearSheet } : {}),
     },
   }).then(normalizeTranOutlookOutput),
+  createTranCompanionDraft: (
+    assets,
+    sourceBindings,
+    mailArtifactHandle,
+    bodyIntro,
+    processingDate,
+    yearSheet,
+    signal,
+  ) => request(API.tranCompanionDrafts, {
+    method: "POST",
+    signal,
+    body: {
+      assets,
+      source_bindings: sourceBindings,
+      mail_artifact_handle: mailArtifactHandle,
+      body_intro: bodyIntro,
+      ...(processingDate ? { processing_date: processingDate } : {}),
+      ...(yearSheet ? { year_sheet: yearSheet } : {}),
+    },
+  }).then(normalizeCompanionDraft),
+  createCompanionPairing: (role, clientType, signal) => {
+    if (!["ngan", "tran"].includes(role)) throw new Error("Outlook role is invalid.");
+    if (!["outlook_addin", "local_bridge"].includes(clientType)) {
+      throw new Error("Outlook connection type is invalid.");
+    }
+    return request(API.companionPairings, {
+      method: "POST",
+      signal,
+      headers: { "X-Asset-Hub-Action": "companion-pair-v1" },
+      body: { role, client_type: clientType },
+    }).then((raw) => normalizeCompanionPairing(raw?.pairing || raw));
+  },
   m365Status: (role, signal) => request(m365Path(role, "/status"), { signal })
     .then((raw) => normalizeM365Status(raw, role)),
   connectM365: (role, signal) => request(m365Path(role, "/connect"), {

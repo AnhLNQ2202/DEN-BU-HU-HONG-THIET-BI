@@ -34,6 +34,8 @@ services:
         sync: false
       - key: ASSET_HUB_M365_REDIRECT_URI
         value: https://asset-compensation-hub-staging.onrender.com/api/m365/callback
+      - key: ASSET_HUB_PUBLIC_ORIGIN
+        value: https://asset-compensation-hub-staging.onrender.com
       - key: ASSET_HUB_SECRET_KEY
         generateValue: true
       - key: ASSET_HUB_ACCESS_USER
