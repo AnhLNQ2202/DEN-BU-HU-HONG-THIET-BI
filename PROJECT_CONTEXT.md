@@ -47,13 +47,14 @@ Snapshot này được lập ngày **2026-08-15**:
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
 | Branch tích hợp | `agent/react-trannnb-team-dev` |
-| Commit template/Draft Mail đã publish | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
+| Commit feature template/Draft Mail | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
+| Commit đã CI và đang live trên Render | `728734e285ea93a11431918030be36f2bcf14145` |
 | `main` tại snapshot | `c8807c830e46f588990bd2aeb222c2946dc849aa` |
 | Draft PR hiện tại | [PR #5](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/5) |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Render deploy quan sát gần nhất | `e67f08b`; thay đổi `9e17959` **chưa deploy** tại snapshot |
+| Render deploy quan sát gần nhất | Manual Deploy `728734e`, trạng thái **live** lúc 2026-08-15 15:38 GMT+7 |
 | Health | `/api/health` trả `200`; `/` không có auth trả `401` |
 | CI | Hai check `quality` của PR #5 trên exact commit đều `SUCCESS` |
 | CI Linux exact commit | 251 test pass, 85% statement coverage |
@@ -921,12 +922,17 @@ Checklist authenticated:
 6. Upload FA&GL/CCDC synthetic, resolve/export/draft.
 7. Clear test data và xác nhận dashboard/reference về empty.
 
-Snapshot 2026-08-15 đã xác nhận deploy đang live ở commit cũ `e67f08b`, health
-200, auth 401, Gunicorn boot và WeasyPrint 68.1 được cài. Commit template/Draft
-Mail `9e17959` đã push/CI xanh nhưng chưa Manual Deploy. Authenticated cloud
-workflow chưa được automation chạy vì AI không đọc/chia sẻ secret Basic Auth;
-operator cần chạy checklist trên. Manual Deploy/redeploy có thể xóa toàn bộ dữ
-liệu `/tmp/asset-hub-staging`, nên phải lấy xác nhận của user ngay trước thao tác.
+Ngày 2026-08-15, user đã xác nhận chấp nhận mất dữ liệu staging và Manual Deploy
+commit `728734e285ea93a11431918030be36f2bcf14145`. Render checkout đúng commit,
+Docker build thành công, health check liên tục trả 200 và deployment chuyển sang
+**live** lúc 15:38 GMT+7. Smoke test độc lập sau deploy xác nhận
+`GET /api/health` trả 200 với payload constant và `GET /` không credential trả
+401. Log runtime cũng ghi nhận React shell, bundle, dashboard API và trạng thái
+Tran reference được tải thành công từ một phiên đã xác thực; automation không
+đọc hoặc chia sẻ secret Basic Auth. Full synthetic workflow có ghi dữ liệu vẫn
+thuộc checklist operator ở trên. Mọi lần Manual Deploy/redeploy sau vẫn có thể
+xóa toàn bộ dữ liệu `/tmp/asset-hub-staging`, nên phải lấy xác nhận mới của user
+ngay trước thao tác.
 
 ### 14.3 GreenNode
 
@@ -1075,7 +1081,8 @@ giới hạn/next step, không được quảng bá là đã production-ready:
 ### Ưu tiên cao cho UAT/release
 
 1. Operator đăng nhập staging và chạy synthetic end-to-end cloud PDF + Tran;
-   automation không được lấy secret từ Render.
+   deploy/health/auth/UI-load đã smoke thành công, nhưng automation không được
+   lấy secret từ Render để tự ghi dữ liệu test.
 2. Review draft PR #5, merge vào `main` khi owner chấp thuận; sau merge tạo/tag
    release nếu cần cho hackathon.
 3. UAT bằng approved operational accounting template/config trên môi trường
