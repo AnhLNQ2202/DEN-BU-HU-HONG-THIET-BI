@@ -43,6 +43,11 @@ function localIsoDate(value = new Date()) {
   return new Date(value.getTime() - offset).toISOString().slice(0, 10);
 }
 
+function elapsedClock(totalSeconds) {
+  const seconds = Math.max(0, Number(totalSeconds) || 0);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 function firstSourceValue(caseItem, keys) {
   const metadata = caseItem?.metadata && typeof caseItem.metadata === "object"
     ? caseItem.metadata
@@ -309,6 +314,8 @@ export function TranWorkspace({
   const [referenceLoading, setReferenceLoading] = useState(true);
   const [referenceBusy, setReferenceBusy] = useState(false);
   const [referenceProgress, setReferenceProgress] = useState(null);
+  const [referencePhase, setReferencePhase] = useState("");
+  const [referenceScanSeconds, setReferenceScanSeconds] = useState(0);
   const [referenceError, setReferenceError] = useState("");
   const [referenceNotice, setReferenceNotice] = useState("");
   const [faFile, setFaFile] = useState(null);
@@ -365,6 +372,8 @@ export function TranWorkspace({
     setReferenceError("");
     setReferenceNotice("");
     setReferenceProgress(null);
+    setReferencePhase("");
+    setReferenceScanSeconds(0);
     setReferenceStatus(EMPTY_REFERENCE_STATUS);
     setReferenceBusy(false);
     setResolution(null);
@@ -398,6 +407,16 @@ export function TranWorkspace({
     referenceControllerRef.current?.abort();
     actionControllerRef.current?.abort();
   }, []);
+
+  useEffect(() => {
+    if (!referenceBusy || referencePhase !== "processing") return undefined;
+    const startedAt = Date.now();
+    setReferenceScanSeconds(0);
+    const timer = window.setInterval(() => {
+      setReferenceScanSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [referenceBusy, referencePhase]);
 
   useEffect(() => {
     if (!pendingUploadedCaseId) return;
@@ -508,6 +527,8 @@ export function TranWorkspace({
     referenceControllerRef.current = controller;
     setReferenceBusy(true);
     setReferenceProgress(0);
+    setReferencePhase("uploading");
+    setReferenceScanSeconds(0);
     setReferenceError("");
     setReferenceNotice("");
     try {
@@ -518,6 +539,10 @@ export function TranWorkspace({
         {
           signal: controller.signal,
           onProgress: ({ percent }) => setReferenceProgress(percent),
+          onUploadComplete: () => {
+            setReferenceProgress(null);
+            setReferencePhase("processing");
+          },
         },
       );
       setReferenceStatus(response.status);
@@ -532,7 +557,11 @@ export function TranWorkspace({
     } catch (error) {
       if (error.name !== "AbortError") setReferenceError(error.message);
     } finally {
-      if (!controller.signal.aborted) setReferenceBusy(false);
+      if (!controller.signal.aborted) {
+        setReferenceBusy(false);
+        setReferencePhase("");
+        setReferenceProgress(null);
+      }
     }
   }
 
@@ -778,13 +807,31 @@ export function TranWorkspace({
             </label>
             <div className="upload-actions">
               <button className="btn" type="submit" disabled={referenceBusy || Boolean(busyAction) || !faFile}>
-                {translate(language, referenceBusy ? "tranReferenceUploading" : "tranReferenceUpload")}
+                {translate(
+                  language,
+                  referenceBusy
+                    ? (referencePhase === "processing" ? "tranReferenceProcessingButton" : "tranReferenceUploadingButton")
+                    : "tranReferenceUpload",
+                )}
               </button>
+              <span className="disabled-note">{translate(language, "tranReferenceTrustedErp")}</span>
             </div>
             {referenceBusy && (
               <div className="upload-progress" role="status">
-                <span>{translate(language, "tranReferenceUploading")}</span>
-                <progress max="100" value={referenceProgress ?? undefined} />
+                {referencePhase === "processing" ? (
+                  <>
+                    <span>
+                      {translate(language, "tranReferenceProcessing")} {" "}
+                      {translate(language, "tranReferenceElapsed")} {elapsedClock(referenceScanSeconds)}
+                    </span>
+                    <progress />
+                  </>
+                ) : (
+                  <>
+                    <span>{translate(language, "tranReferenceUploading")}</span>
+                    <progress max="100" value={referenceProgress ?? undefined} />
+                  </>
+                )}
               </div>
             )}
           </form>

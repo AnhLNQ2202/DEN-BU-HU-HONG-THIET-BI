@@ -177,13 +177,16 @@ def _upload_fa(app: Flask) -> dict[str, object]:
                 io.BytesIO(_fa_gl_bytes()),
                 "synthetic-fa-gl.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            ),
+            "trusted_erp": "true",
         },
         headers={"X-Asset-Hub-Upload": "tran-reference-v1"},
         content_type="multipart/form-data",
     )
     assert response.status_code == 201
-    return response.get_json()
+    payload = response.get_json()
+    assert payload["processing_mode"] == "trusted-erp-fast"
+    return payload
 
 
 def test_capabilities_fail_closed_until_reference_is_uploaded(tmp_path: Path) -> None:

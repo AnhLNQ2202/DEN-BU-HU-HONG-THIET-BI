@@ -39,6 +39,18 @@ currently uploaded CCDC, omit both CCDC fields. To remove it from the new
 managed version, omit `ccdc_file` and send the exact text field
 `clear_ccdc=true`.
 
+The Product UI also sends `trusted_erp=true` because this installation's
+FA&GL/CCDC files are operator-exported internal ERP reports. That explicit mode
+skips only the costly whole-workbook external-formula text scan. It still
+performs archive/type/size/path/ratio checks, rejects VBA/OLE/ActiveX/embedded
+content and unsafe relationships, validates the exact sheet/header/row bounds,
+and builds the complete index before activation. API clients that omit the
+field retain the full external-formula scan. The response identifies the chosen
+mode as `processing_mode: "trusted-erp-fast"` or `"full"`.
+The UI reports multipart transfer as step 1, then switches to an indeterminate
+server-scan step with elapsed time as soon as the browser has finished sending
+the bytes; a 100% upload bar therefore no longer looks like a hung request.
+
 Before activation, the service bounds ZIP entries, expansion and compression
 ratio; rejects encryption, unsafe paths, duplicate entries, VBA, DDE/OLE,
 ActiveX, embedded objects, remote relationships, and external formulas or
@@ -46,9 +58,17 @@ defined names; and validates the workbook through the FA&GL/CCDC indexes. A
 narrow compatibility exception accepts standard `externalBook` metadata only
 when every target is a local `file:` URI and the link has no cached data,
 formula, or defined-name dependency. Readers use `keep_links=False`, so those
-orphan links are never loaded or resolved. The service then switches one atomic
-version pointer. A failed replacement leaves the previous version active.
-Client filenames are never used as storage names.
+orphan links are never loaded or resolved by the CCDC reader; the FA&GL
+Calamine reader likewise does not fetch external workbooks. The service then
+switches one atomic version pointer. A failed replacement leaves the previous
+version active. Client filenames are never used as storage names.
+
+FA&GL indexing uses a streaming Calamine reader and preserves the same four
+sheet/header/column contract and exact values previously produced by the
+openpyxl reader. Lookup remains exact first. Only when the requested tag has no
+exact FA&GL row does it retry a single ERP terminal-period variant (for example,
+`DEMO60281` may match the source value `DEMO60281.`); existing exact rows always
+win and multiple fallback rows remain ambiguous.
 
 An administrator may instead configure read-only external files with
 `ASSET_HUB_FA_GL_REFERENCE` and `ASSET_HUB_CCDC_REFERENCE`. A managed upload

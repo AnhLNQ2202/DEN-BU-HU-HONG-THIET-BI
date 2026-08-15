@@ -724,6 +724,30 @@ def test_xlsx_preflight_rejects_external_formula_without_link_metadata(
     assert service.status()["configured"] is False
 
 
+def test_explicit_trusted_erp_mode_skips_only_deep_formula_scan(
+    tmp_path: Path,
+) -> None:
+    service = TranReferenceUploadService(tmp_path / "references")
+    formula_data = fa_gl_bytes(
+        data_validation_formula="[Book.xlsx]Synthetic!A1"
+    )
+
+    result = service.upload(
+        upload(formula_data, "fa.xlsx"),
+        trusted_erp=True,
+    )
+
+    assert result["fa_gl_configured"] is True
+    active_content = io.BytesIO(fa_gl_bytes())
+    with zipfile.ZipFile(active_content, mode="a") as archive:
+        archive.writestr("xl/embeddings/payload.bin", b"synthetic payload")
+    with pytest.raises(TranReferenceUploadError, match="active, linked, or embedded"):
+        service.upload(
+            upload(active_content.getvalue(), "fa.xlsx"),
+            trusted_erp=True,
+        )
+
+
 def test_xlsx_preflight_rejects_external_formula_attribute(
     tmp_path: Path,
 ) -> None:

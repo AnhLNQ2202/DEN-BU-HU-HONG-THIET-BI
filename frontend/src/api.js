@@ -442,7 +442,11 @@ function responseMessage(data, status) {
 }
 
 /** Upload multipart data with real browser upload progress and abort support. */
-export function uploadMultipart(path, formData, { signal, onProgress, headers = {} } = {}) {
+export function uploadMultipart(
+  path,
+  formData,
+  { signal, onProgress, onUploadComplete, headers = {} } = {},
+) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     let settled = false;
@@ -476,6 +480,7 @@ export function uploadMultipart(path, formData, { signal, onProgress, headers = 
         : null;
       onProgress?.({ loaded: event.loaded, total: event.total, percent });
     });
+    xhr.upload.addEventListener("load", () => onUploadComplete?.());
     xhr.addEventListener("load", () => {
       let data = {};
       if (xhr.responseText) {
@@ -529,6 +534,7 @@ export const dashboardApi = {
     formData.append("fa_gl_file", faGlFile, faGlFile.name);
     if (ccdcFile) formData.append("ccdc_file", ccdcFile, ccdcFile.name);
     if (clearCcdc) formData.append("clear_ccdc", "true");
+    formData.append("trusted_erp", "true");
     return uploadMultipart(API.tranReferenceUpload, formData, {
       ...options,
       headers: { ...options.headers, "X-Asset-Hub-Upload": "tran-reference-v1" },
