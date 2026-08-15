@@ -40,11 +40,15 @@ managed version, omit `ccdc_file` and send the exact text field
 `clear_ccdc=true`.
 
 Before activation, the service bounds ZIP entries, expansion and compression
-ratio; rejects encryption, unsafe paths, duplicate entries, VBA, external
-links, ActiveX, OLE and embedded objects; and validates the workbook through
-the FA&GL/CCDC indexes. It then switches one atomic version pointer. A failed
-replacement leaves the previous version active. Client filenames are never
-used as storage names.
+ratio; rejects encryption, unsafe paths, duplicate entries, VBA, DDE/OLE,
+ActiveX, embedded objects, remote relationships, and external formulas or
+defined names; and validates the workbook through the FA&GL/CCDC indexes. A
+narrow compatibility exception accepts standard `externalBook` metadata only
+when every target is a local `file:` URI and the link has no cached data,
+formula, or defined-name dependency. Readers use `keep_links=False`, so those
+orphan links are never loaded or resolved. The service then switches one atomic
+version pointer. A failed replacement leaves the previous version active.
+Client filenames are never used as storage names.
 
 An administrator may instead configure read-only external files with
 `ASSET_HUB_FA_GL_REFERENCE` and `ASSET_HUB_CCDC_REFERENCE`. A managed upload
