@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { dashboardApi } from "../api.js";
 import { translate } from "../i18n.js";
+import { useToast } from "./Feedback.jsx";
 
 export const MAIL_PDF_BATCH_LIMIT = 20;
 
@@ -63,10 +64,10 @@ export function MailPdfPanel({
   const [pagesPerMail, setPagesPerMail] = useState("2");
   const [overflowPolicy, setOverflowPolicy] = useState("fail");
   const [busyAction, setBusyAction] = useState("");
-  const [error, setError] = useState("");
   const [individualResult, setIndividualResult] = useState(null);
   const [batchResult, setBatchResult] = useState(null);
   const controllerRef = useRef(null);
+  const pushToast = useToast();
 
   const canCreateIndividual = capabilities?.mail_pdf_individual === true;
   const canCreateBatch = capabilities?.mail_pdf_batch === true;
@@ -97,7 +98,6 @@ export function MailPdfPanel({
     setPagesPerMail("2");
     setOverflowPolicy("fail");
     setBusyAction("");
-    setError("");
     setIndividualResult(null);
     setBatchResult(null);
   }, [resetVersion]);
@@ -108,17 +108,19 @@ export function MailPdfPanel({
     if (selectedHandles.includes(handle)) {
       setSelectedHandles((current) => current.filter((item) => item !== handle));
     } else if (selectedHandles.length >= MAIL_PDF_BATCH_LIMIT) {
-      setError(translate(language, "pdfSelectionLimitReached"));
+      pushToast(
+        translate(language, "toastWarningTitle"),
+        translate(language, "pdfSelectionLimitReached"),
+        "warning",
+      );
       return;
     } else {
       setSelectedHandles((current) => [...current, handle]);
     }
-    setError("");
   }
 
   function toggleAll() {
     setSelectedHandles(allSelectableSelected ? [] : selectableHandles);
-    setError("");
   }
 
   async function createIndividual() {
@@ -126,7 +128,6 @@ export function MailPdfPanel({
     const controller = new AbortController();
     controllerRef.current = controller;
     setBusyAction("individual");
-    setError("");
     setIndividualResult(null);
     try {
       const result = await dashboardApi.createIndividualMailPdf(
@@ -134,8 +135,19 @@ export function MailPdfPanel({
         controller.signal,
       );
       setIndividualResult(result);
+      pushToast(
+        translate(language, "pdfToastReadyTitle"),
+        translate(language, "pdfIndividualReady"),
+        "success",
+      );
     } catch (requestError) {
-      if (requestError.name !== "AbortError") setError(requestError.message);
+      if (requestError.name !== "AbortError") {
+        pushToast(
+          translate(language, "pdfToastErrorTitle"),
+          requestError.message,
+          "error",
+        );
+      }
     } finally {
       if (!controller.signal.aborted) setBusyAction("");
     }
@@ -144,18 +156,25 @@ export function MailPdfPanel({
   async function createBatch() {
     if (!selectedHandles.length || !canCreateBatch) return;
     if (selectedHandles.length > MAIL_PDF_BATCH_LIMIT) {
-      setError(translate(language, "pdfSelectionLimitReached"));
+      pushToast(
+        translate(language, "toastWarningTitle"),
+        translate(language, "pdfSelectionLimitReached"),
+        "warning",
+      );
       return;
     }
     const pages = Number(pagesPerMail);
     if (!Number.isInteger(pages) || pages < 1 || pages > 10) {
-      setError(translate(language, "pdfPagesInvalid"));
+      pushToast(
+        translate(language, "toastWarningTitle"),
+        translate(language, "pdfPagesInvalid"),
+        "warning",
+      );
       return;
     }
     const controller = new AbortController();
     controllerRef.current = controller;
     setBusyAction("batch");
-    setError("");
     setBatchResult(null);
     try {
       const result = await dashboardApi.createMailPdfBatch(
@@ -166,8 +185,19 @@ export function MailPdfPanel({
         controller.signal,
       );
       setBatchResult(result);
+      pushToast(
+        translate(language, "pdfToastReadyTitle"),
+        translate(language, "pdfBatchReady"),
+        (result.warnings || []).length ? "warning" : "success",
+      );
     } catch (requestError) {
-      if (requestError.name !== "AbortError") setError(requestError.message);
+      if (requestError.name !== "AbortError") {
+        pushToast(
+          translate(language, "pdfToastErrorTitle"),
+          requestError.message,
+          "error",
+        );
+      }
     } finally {
       if (!controller.signal.aborted) setBusyAction("");
     }
@@ -313,8 +343,6 @@ export function MailPdfPanel({
           <progress aria-label={translate(language, "pdfProgressLabel")} />
         </div>
       )}
-      {error && <div className="inline-error" role="alert">{error}</div>}
-
       {individualResult && (
         <div className="upload-result" aria-live="polite">
           <strong>{translate(language, "pdfIndividualReady")}</strong>

@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { dashboardApi } from "../api.js";
 import { API } from "../constants.js";
 import { translate } from "../i18n.js";
+import { useToast } from "./Feedback.jsx";
 
 const METHODS = Object.freeze([
   {
@@ -40,23 +41,30 @@ const METHODS = Object.freeze([
 export function OutlookCompanionPanel({ capabilities, language, refreshVersion = 0, role }) {
   const [busyType, setBusyType] = useState("");
   const [pairings, setPairings] = useState({});
-  const [error, setError] = useState("");
+  const pushToast = useToast();
   const available = capabilities?.companion_pairing === true;
 
   useEffect(() => {
     setBusyType("");
     setPairings({});
-    setError("");
   }, [refreshVersion]);
 
   async function createPairing(clientType) {
     setBusyType(clientType);
-    setError("");
     try {
       const pairing = await dashboardApi.createCompanionPairing(role, clientType);
       setPairings((current) => ({ ...current, [clientType]: pairing }));
+      pushToast(
+        translate(language, "toastSuccessTitle"),
+        translate(language, "companionCodeCreatedNotice"),
+        "success",
+      );
     } catch (requestError) {
-      setError(requestError.message);
+      pushToast(
+        translate(language, "toastErrorTitle"),
+        requestError.message,
+        "error",
+      );
     } finally {
       setBusyType("");
     }
@@ -65,8 +73,17 @@ export function OutlookCompanionPanel({ capabilities, language, refreshVersion =
   async function copyCode(code) {
     try {
       await navigator.clipboard.writeText(code);
+      pushToast(
+        translate(language, "toastSuccessTitle"),
+        translate(language, "companionCodeCopiedNotice"),
+        "success",
+      );
     } catch {
-      // The code remains visible for manual entry when clipboard access is blocked.
+      pushToast(
+        translate(language, "toastErrorTitle"),
+        translate(language, "companionCopyFailedNotice"),
+        "error",
+      );
     }
   }
 
@@ -133,7 +150,16 @@ export function OutlookCompanionPanel({ capabilities, language, refreshVersion =
                 {stepKeys.map((key) => <li key={key}>{translate(language, key)}</li>)}
               </ol>
               <div className="companion-actions">
-                <a className="btn secondary" href={method.downloadUrl} download>
+                <a
+                  className="btn secondary"
+                  href={method.downloadUrl}
+                  download
+                  onClick={() => pushToast(
+                    translate(language, "toastInfoTitle"),
+                    translate(language, "companionDownloadStartedNotice"),
+                    "info",
+                  )}
+                >
                   ↓ {translate(language, method.downloadKey)}
                 </a>
                 <button
@@ -163,7 +189,6 @@ export function OutlookCompanionPanel({ capabilities, language, refreshVersion =
       {!available && (
         <div className="disabled-note">{translate(language, "companionUnavailable")}</div>
       )}
-      {error && <div className="inline-error" role="alert">{error}</div>}
       <div className="m365-safety-note">
         <strong>{translate(language, "companionSafetyTitle")}</strong>
         <span>{translate(language, "companionSafety")}</span>

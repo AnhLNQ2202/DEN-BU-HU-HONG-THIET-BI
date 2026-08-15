@@ -52,20 +52,21 @@ Snapshot hiện tại được cập nhật ngày **2026-08-16**:
 | Hạng mục | Giá trị tại snapshot |
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
-| Branch candidate hiện tại | `agent/tran-reference-fast-upload` |
-| Base `origin/main` | `1ed076fd8854522a6396cfeed78b248a56588baf` |
+| Branch candidate hiện tại | `agent/dpi-toast-personal-outlook` |
+| Base `origin/main` | `e01eca741420a24e03acc4b58cb20f73e07d6c5a` |
 | Outlook companion | PR [#7](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/7) đã merge; Add-in/Bridge đã được smoke public assets trên staging |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Candidate local gate | 378 collected = 376 pass + 2 skip; 82% coverage; Ruff/diff-check + production Docker build/container smoke pass |
-| Frontend candidate | 4 Node contract tests; Vite 51 modules; tracked dist regenerated |
-| Candidate deploy status | Kiểm tra GitHub/Render theo exact commit hiện tại; M365 env vẫn chủ động để trống |
+| Candidate local gate | 389 collected = 387 pass + 2 expected platform skips; Ruff/diff-check + production Docker build/container smoke pass |
+| Frontend candidate | 6 Node contract tests; Vite 51 modules; tracked dist regenerated |
+| Candidate deploy status | Chưa push/deploy tại thời điểm snapshot; M365 env vẫn chủ động để trống |
 | Release verdict | Local staging gate xanh; phải chờ GitHub CI Docker rồi mới Manual Deploy; chưa phải production multi-user |
 
-Candidate hiện tại kế thừa parser/mail-identity/UI merged, sửa ERP Tag Number có
-một dấu chấm cuối, chuyển FA&GL index sang Calamine streaming, thêm trusted-ERP
-fast scan và UI hai giai đoạn upload/server scan. User đã cho phép
+Candidate hiện tại kế thừa parser/mail-identity/UI và fast-upload đã merge; thêm
+Windows DPI awareness cho Local Bridge, chọn tối đa 20 draft cùng lúc, toast
+toàn cục ở góc phải dưới, và giữ Microsoft 365 cá nhân ở trạng thái fail-closed
+cho đến khi có App Registration hợp lệ. User đã cho phép
 redeploy disposable staging và chấp nhận mất dữ liệu `/tmp`; quyền này chỉ áp
 dụng staging service nêu trên, không mở rộng sang production hay thay env/plan.
 
@@ -233,7 +234,7 @@ flowchart TD
     RESOLVE -->|all ready| CALC["Compensation calculation"]
     CALC --> WB["New Tran workbook + Sent out"]
     WB --> DRAFT["Unsent reply-all .eml draft"]
-    WB --> ODRAFT["Optional Graph createReplyAll\nattach workbook; never send"]
+    WB --> ODRAFT["Optional Graph draft\ncompany Reply-All or personal standalone; never send"]
     WB --> CDRAFT["Optional Add-in/Local Bridge package\nopen exact-source Reply-All; never send"]
     EML --> PDF["Individual/batch PDF evidence"]
 ```
@@ -318,7 +319,7 @@ integration và không thay Graph flow khi Entra sau này được cấp quyền
 | Phương án | Cách hiểu đơn giản | Phù hợp | Giới hạn chính |
 | --- | --- | --- | --- |
 | Office.js Add-in | Mở một mail rồi bấm đưa đúng mail đó vào Product; Tran nhận package và mở Reply-All trên item đang mở | Ít mail; New/Web/Classic Outlook có Mailbox 1.14/1.15 và tenant cho sideload | Không scan folder; full EML ≤2 MiB và attachment bị common validator reject; body draft Add-in ≤32 KiB |
-| Classic Outlook Local Bridge | Chọn một exact folder Ngan và một exact folder Tran; Bridge chở bounded mail body sang Product và giữ map tới mail gốc để mở Reply-All | Nhiều mail; hai folder/mailbox trong cùng Windows Outlook profile | Windows + Classic Outlook + Python 3.11; interactive only; không recurse; max 20 mail/lượt; không chuyển attachment |
+| Classic Outlook Local Bridge | Chọn một exact folder Ngan và một exact folder Tran; Bridge chở bounded mail body sang Product và giữ map tới mail gốc để mở tối đa 20 Reply-All đã chọn/lượt | Nhiều mail; hai folder/mailbox trong cùng Windows Outlook profile | Windows + Classic Outlook + Python 3.11; interactive only; không recurse; max 20 mail nạp/lượt; không chuyển attachment; mỗi draft vẫn là một mail riêng và không tự gửi |
 
 Luồng chung:
 
@@ -389,7 +390,7 @@ install, troubleshooting và QA đầy đủ ở `docs/OUTLOOK_COMPANIONS.md`.
 | `src/asset_compensation/services/supplier_upload_service.py` | Safe Supplier version upload/activation |
 | `src/asset_compensation/services/tran_reference_upload_service.py` | Safe FA&GL/CCDC version upload/activation + bounded generation-consistent index cache |
 | `src/asset_compensation/services/m365_auth_service.py` | Role/session-isolated MSAL cache, OAuth, folder selection và bounded delta collection |
-| `src/asset_compensation/services/m365_mail_service.py` | Graph MIME → existing ingestion pipeline; Outlook Reply-All draft orchestration/rollback |
+| `src/asset_compensation/services/m365_mail_service.py` | Graph MIME → existing ingestion pipeline; company Reply-All/personal standalone Outlook draft orchestration/rollback |
 | `src/asset_compensation/services/companion_service.py` | In-memory one-time pairing, hashed bearer sessions, exact-source handle binding và 30-minute Tran package queue |
 | `src/asset_compensation/services/mail_artifact_service.py` | Optional content-addressed EML retention |
 | `src/asset_compensation/services/mail_pdf_service.py` | Atomic individual/batch PDF orchestration |
@@ -1015,7 +1016,7 @@ Render/GreenNode dashboard. `.env.example` là reference synthetic.
 | `ASSET_HUB_TRAN_TEMPLATE` | built-in clean template | External approved Tran template |
 | `ASSET_HUB_RETAIN_RAW_EML` | `false` | Bắt buộc cho source download/draft/PDF |
 | `ASSET_HUB_DRAFT_FROM_ADDRESS` | unset | Sender cho generated unsent draft |
-| `ASSET_HUB_M365_TENANT_ID` | unset | Tenant-specific GUID/domain; reject `common`/`organizations`/`consumers` |
+| `ASSET_HUB_M365_TENANT_ID` | unset | Tenant GUID/domain, or `consumers` for a personal forwarding inbox; reject `common`/`organizations` |
 | `ASSET_HUB_M365_CLIENT_ID` | unset | Entra confidential Web app client GUID |
 | `ASSET_HUB_M365_CLIENT_SECRET` | unset | Secret runtime-only, bị ẩn khỏi settings repr; không log/commit |
 | `ASSET_HUB_M365_REDIRECT_URI` | unset | Exact `/api/m365/callback`; HTTPS cloud hoặc HTTP loopback local |
@@ -1545,6 +1546,32 @@ trong tài liệu là HEAD bất biến.
   modules pass;
 - production Docker Linux build cài `python-calamine` 0.7.0 thành công; container
   smoke pass health 200, root không Basic 401 và public Add-in taskpane 200.
+
+**DPI/toast/personal-Outlook candidate evidence (local, 16/08/2026):**
+
+- Local Bridge bật Windows per-monitor DPI awareness trước khi dựng Tk, giữ
+  Product origin đóng gói cố định, và cho chọn/mở tối đa 20 draft Tran trong một
+  lượt; Ngan vẫn chỉ ingest và không nhận draft;
+- frontend dùng một toast provider toàn cục ở góc phải dưới cho success/error,
+  không đặt thông báo hành động lẫn trong form; modal Outlook cạnh language vẫn
+  giữ nguyên state kết nối khi đóng/mở;
+- tenant `consumers` được code hỗ trợ theo hướng fail-closed cho một inbox cá
+  nhân nhận mail forward-as-attachment: Ngan đọc mail; Tran chỉ có thể tạo một
+  draft độc lập không người nhận và không gọi send. Bốn M365 env của staging vẫn
+  để trống theo quyết định vận hành hiện tại, nên capability M365 tiếp tục false;
+- full pytest: 389 collected = 387 passed + 2 expected platform skips; focused
+  M365/parser/Local-Bridge gate 89 passed; frontend Node contract 6 passed;
+  Ruff toàn repo và `git diff --check` pass;
+- Vite 5.4.14 production build pass 51 modules; tracked Windows worktree bundle
+  SHA-256 `app.js` =
+  `546D49C103D639C213C0F50C163F97E825A44A6F331C07A03986950394A87221`,
+  `app.css` =
+  `2587DB56AB4CA8B514521CB56A4A53E010B406D0DAD131A01B771407E4B8692B`;
+- fresh no-cache production Docker Linux build pass. Container smoke xác nhận
+  exact health payload, root không Basic trả 401, Add-in taskpane trả 200 với
+  `no-store`, và `m365_configured/ngan/tran` đều false. Docker bundle dùng LF còn
+  Windows worktree dùng CRLF, nên raw SHA khác nhưng source hashes và nội dung
+  sau Git text normalization khớp; đây không phải functional drift.
 
 ### 15.4 Khoảng trống automation hiện tại
 

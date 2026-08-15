@@ -91,6 +91,13 @@ def test_download_allowlist_is_complete_and_text_safe() -> None:
     )
 
 
+def test_bridge_enables_dpi_awareness_before_creating_tk_window() -> None:
+    source = (PACKAGE_DIRECTORY / "app.py").read_text(encoding="utf-8")
+    assert "SetProcessDpiAwarenessContext" in source
+    assert 'root.tk.call("tk", "scaling"' in source
+    assert "    _enable_windows_dpi_awareness()\n    root = tk.Tk()" in source
+
+
 def test_readme_explains_the_bridge_in_child_simple_steps() -> None:
     readme = (PACKAGE_DIRECTORY / "README.txt").read_text(encoding="utf-8")
     assert "chiếc cầu" in readme
@@ -497,7 +504,68 @@ def test_opened_draft_is_suppressed_even_when_acknowledgement_fails(monkeypatch)
     assert package.package_id in state.opened_package_ids
     assert package.package_id not in state.packages
     assert gui.package_tree.deleted == [f"tran:{package.package_id}"]
-    assert "Không mở lại" in logs[-1]
+    assert any("Không mở lại" in line for line in logs)
+    assert logs[-1] == "Đã mở 1 draft đã chọn; không có thao tác tự gửi."
+
+
+def test_multiple_selected_drafts_open_independently(monkeypatch) -> None:
+    from asset_compensation.integrations.local_bridge import app as bridge_app
+
+    packages = [
+        DraftPackage(f"package_{index:08d}", f"handle-{index}", f"Draft {index}", "<p>OK</p>")
+        for index in (1, 2)
+    ]
+
+    class _Client:
+        def get_draft_package(self, package_id: str) -> DraftPackage:
+            return next(package for package in packages if package.package_id == package_id)
+
+        def acknowledge_draft(self, package_id: str) -> None:
+            assert package_id in {package.package_id for package in packages}
+
+    opened: list[str] = []
+
+    class _Adapter:
+        def open_reply(self, source: SourceReference, **kwargs: object) -> None:
+            del kwargs
+            opened.append(source.entry_id)
+
+        def close(self) -> None:
+            return None
+
+    class _Tree:
+        deleted: list[str] = []
+
+        def selection(self) -> tuple[str, ...]:
+            return tuple(f"tran:{package.package_id}" for package in packages)
+
+        def exists(self, item: str) -> bool:
+            return item not in self.deleted
+
+        def delete(self, item: str) -> None:
+            self.deleted.append(item)
+
+    state = bridge_app.RoleState("tran")
+    state.client = _Client()  # type: ignore[assignment]
+    for index, package in enumerate(packages, start=1):
+        state.sources[package.artifact_handle] = SourceReference(
+            "tran", f"entry-{index}", f"store-{index}"
+        )
+        state.packages[package.package_id] = package
+    logs: list[str] = []
+    gui = object.__new__(bridge_app.BridgeGui)
+    gui.states = {"tran": state}
+    gui.package_tree = _Tree()
+    gui._write_log = logs.append
+    gui._run_async = lambda label, work, done: done(work())
+    monkeypatch.setattr(bridge_app, "OutlookAdapter", _Adapter)
+
+    gui._open_selected_package()
+
+    assert opened == ["entry-1", "entry-2"]
+    assert state.packages == {}
+    assert set(state.opened_package_ids) == {package.package_id for package in packages}
+    assert logs[-1] == "Đã mở 2 draft đã chọn; không có thao tác tự gửi."
 
 
 def test_outlook_source_contains_no_automatic_mail_transmission_member() -> None:

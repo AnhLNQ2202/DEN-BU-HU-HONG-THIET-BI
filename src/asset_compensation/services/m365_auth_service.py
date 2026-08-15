@@ -39,7 +39,10 @@ _TENANT_DOMAIN_RE = re.compile(
 )
 _ROLES = frozenset({"ngan", "tran"})
 _ROLE_SCOPES = {"ngan": "Mail.Read", "tran": "Mail.ReadWrite"}
-_RESERVED_TENANTS = frozenset({"common", "organizations", "consumers"})
+# ``consumers`` is intentionally allowed for a dedicated personal Outlook.com
+# inbox. ``common`` and ``organizations`` stay disabled so configuration
+# cannot silently broaden a tenant-specific or personal-only trust boundary.
+_DISALLOWED_TENANTS = frozenset({"common", "organizations"})
 
 
 class M365ServiceError(RuntimeError):
@@ -69,6 +72,12 @@ class M365OAuthConfig:
     client_secret: str
     redirect_uri: str
 
+    @property
+    def personal_forwarding_inbox(self) -> bool:
+        """Return whether this deployment reads a personal forwarding mailbox."""
+
+        return self.tenant_id.casefold() == "consumers"
+
     @classmethod
     def from_settings(cls, settings: Any) -> M365OAuthConfig | None:
         values = (
@@ -85,7 +94,7 @@ class M365OAuthConfig:
         redirect = str(settings.m365_redirect_uri).strip()
         if any(ord(character) < 32 or ord(character) == 127 for character in redirect):
             return None
-        if tenant.casefold() in _RESERVED_TENANTS:
+        if tenant.casefold() in _DISALLOWED_TENANTS:
             return None
         try:
             UUID(client)
@@ -96,7 +105,11 @@ class M365OAuthConfig:
             UUID(tenant)
         except ValueError:
             tenant_is_guid = False
-        if not tenant_is_guid and not _TENANT_DOMAIN_RE.fullmatch(tenant):
+        if (
+            not tenant_is_guid
+            and tenant.casefold() != "consumers"
+            and not _TENANT_DOMAIN_RE.fullmatch(tenant)
+        ):
             return None
         if not 8 <= len(secret) <= 4096 or any(
             ord(character) < 32 or ord(character) == 127 for character in secret
@@ -287,9 +300,21 @@ class M365ConnectionService:
     def secure_cookie(self) -> bool:
         return bool(self._config and self._config.secure_cookie)
 
-    @staticmethod
-    def required_scope(role: object) -> str:
-        return _ROLE_SCOPES[m365_role(role)]
+    @property
+    def outlook_drafts_supported(self) -> bool:
+        """Return whether the configured mailbox can hold unsent Graph drafts."""
+
+        return self.configured
+
+    @property
+    def personal_forwarding_inbox(self) -> bool:
+        """Return whether this deployment uses an Outlook.com forwarding inbox."""
+
+        return bool(self._config and self._config.personal_forwarding_inbox)
+
+    def required_scope(self, role: object) -> str:
+        selected_role = m365_role(role)
+        return _ROLE_SCOPES[selected_role]
 
     def _require_configured(self) -> None:
         if not self.configured:
@@ -362,7 +387,7 @@ class M365ConnectionService:
             assert self._config is not None
             try:
                 flow = self._application(role_state).initiate_auth_code_flow(
-                    scopes=[f"https://graph.microsoft.com/{_ROLE_SCOPES[selected_role]}"],
+                    scopes=[f"https://graph.microsoft.com/{self.required_scope(selected_role)}"],
                     redirect_uri=self._config.redirect_uri,
                     state=state,
                     prompt="select_account",
@@ -479,7 +504,7 @@ class M365ConnectionService:
             raise M365ReconnectRequired("Reconnect this Microsoft 365 role")
         try:
             result = app.acquire_token_silent(
-                [f"https://graph.microsoft.com/{_ROLE_SCOPES[role]}"],
+                [f"https://graph.microsoft.com/{self.required_scope(role)}"],
                 account=accounts[0],
             )
         except Exception as exc:
@@ -509,7 +534,7 @@ class M365ConnectionService:
         base: dict[str, object] = {
             "configured": self.configured,
             "role": selected_role,
-            "required_scope": _ROLE_SCOPES[selected_role],
+            "required_scope": self.required_scope(selected_role),
             "connected": False,
             "account": None,
             "selected_folder": None,

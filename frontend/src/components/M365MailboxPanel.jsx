@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { dashboardApi } from "../api.js";
 import { translate } from "../i18n.js";
+import { useToast } from "./Feedback.jsx";
 
 const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -45,9 +46,8 @@ export function M365MailboxPanel({
   const [folderId, setFolderId] = useState("");
   const [loading, setLoading] = useState(false);
   const [action, setAction] = useState("");
-  const [error, setError] = useState("");
-  const [syncResult, setSyncResult] = useState(null);
   const [autoSync, setAutoSync] = useState(() => initialAutoSync(role));
+  const pushToast = useToast();
   const statusRef = useRef(null);
   const statusControllerRef = useRef(null);
   const statusBusyRef = useRef(false);
@@ -85,7 +85,6 @@ export function M365MailboxPanel({
       setFolders([]);
       setFolderId("");
       setLoading(false);
-      setError("");
       setAutoSync(false);
       persistAutoSync(role, false);
       statusBusyRef.current = false;
@@ -98,7 +97,6 @@ export function M365MailboxPanel({
     statusControllerRef.current = controller;
     statusBusyRef.current = true;
     if (!quiet) setLoading(true);
-    setError("");
     try {
       const nextStatus = await dashboardApi.m365Status(role, controller.signal);
       if (controller.signal.aborted) return null;
@@ -107,14 +105,34 @@ export function M365MailboxPanel({
         setAutoSync(false);
         persistAutoSync(role, false);
         setFolders([]);
+        if (!quiet) {
+          pushToast(
+            translate(language, "toastSuccessTitle"),
+            translate(language, "m365StatusRefreshed"),
+            "success",
+          );
+        }
         return nextStatus;
       }
       const folderResponse = await dashboardApi.m365Folders(role, controller.signal);
       if (!controller.signal.aborted) setFolders(folderResponse.folders);
+      if (!quiet) {
+        pushToast(
+          translate(language, "toastSuccessTitle"),
+          translate(language, "m365StatusRefreshed"),
+          "success",
+        );
+      }
       return nextStatus;
     } catch (requestError) {
       if (requestError.name !== "AbortError") {
-        setError(requestError.message);
+        if (!quiet) {
+          pushToast(
+            translate(language, "toastErrorTitle"),
+            requestError.message,
+            "error",
+          );
+        }
         if (requestError.status === 401 || requestError.status === 503) {
           setAutoSync(false);
           persistAutoSync(role, false);
@@ -137,7 +155,7 @@ export function M365MailboxPanel({
         if (!controller.signal.aborted) setLoading(false);
       }
     }
-  }, [capabilityAvailable, publishStatus, role]);
+  }, [capabilityAvailable, language, publishStatus, pushToast, role]);
 
   useEffect(() => {
     actionControllerRef.current?.abort();
@@ -145,7 +163,7 @@ export function M365MailboxPanel({
     syncBusyRef.current = false;
     setAction("");
     setAutoSync(initialAutoSync(role));
-    loadStatus();
+    loadStatus({ quiet: true });
     return () => statusControllerRef.current?.abort();
   }, [loadStatus, refreshVersion, role]);
 
@@ -154,7 +172,7 @@ export function M365MailboxPanel({
     actionControllerRef.current?.abort();
   }, []);
 
-  const syncMailbox = useCallback(async () => {
+  const syncMailbox = useCallback(async ({ quiet = false } = {}) => {
     if (
       syncBusyRef.current
       || statusBusyRef.current
@@ -168,21 +186,40 @@ export function M365MailboxPanel({
     actionControllerRef.current = controller;
     syncBusyRef.current = true;
     setAction("sync");
-    setError("");
     try {
       const result = await dashboardApi.syncM365(role, controller.signal);
       if (controller.signal.aborted) return null;
-      setSyncResult(result);
       publishStatus({
         ...statusRef.current,
         selected_folder: result.folder || statusRef.current.selected_folder,
         cursor_ready: result.cursor_ready,
       });
       await onSyncedRef.current?.(result);
+      if (!quiet) {
+        const warningCount = result.warnings.length
+          + result.skipped_files.length
+          + result.unknown_files.length;
+        const summary = `${translate(language, "m365Fetched")}: ${result.fetched_count} · ${translate(language, "m365Ingested")}: ${result.ingested} · ${translate(language, "m365Cases")}: ${result.case_ids.length}`;
+        const suffix = [
+          warningCount ? `${translate(language, "uploadWarnings")}: ${warningCount}` : "",
+          result.has_more ? translate(language, "m365HasMore") : "",
+        ].filter(Boolean).join(" · ");
+        pushToast(
+          translate(language, "m365SyncComplete"),
+          suffix ? `${summary} · ${suffix}` : summary,
+          warningCount || result.has_more ? "warning" : "success",
+        );
+      }
       return result;
     } catch (requestError) {
       if (requestError.name !== "AbortError") {
-        setError(requestError.message);
+        if (!quiet) {
+          pushToast(
+            translate(language, "toastErrorTitle"),
+            requestError.message,
+            "error",
+          );
+        }
         if (requestError.status === 401 || requestError.status === 503) {
           setAutoSync(false);
           persistAutoSync(role, false);
@@ -197,13 +234,13 @@ export function M365MailboxPanel({
         if (!controller.signal.aborted) setAction("");
       }
     }
-  }, [loadStatus, publishStatus, role]);
+  }, [language, loadStatus, publishStatus, pushToast, role]);
 
   useEffect(() => {
     if (!autoSync || !status?.connected || !status?.selected_folder?.id) return undefined;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible" && !syncBusyRef.current) {
-        syncMailbox();
+        syncMailbox({ quiet: true });
       }
     }, AUTO_SYNC_INTERVAL_MS);
     return () => window.clearInterval(timer);
@@ -214,13 +251,18 @@ export function M365MailboxPanel({
     actionControllerRef.current?.abort();
     actionControllerRef.current = controller;
     setAction("connect");
-    setError("");
     try {
       const result = await dashboardApi.connectM365(role, controller.signal);
       if (!result.authorization_url) throw new Error(translate(language, "m365AuthorizationInvalid"));
       window.location.assign(result.authorization_url);
     } catch (requestError) {
-      if (requestError.name !== "AbortError") setError(requestError.message);
+      if (requestError.name !== "AbortError") {
+        pushToast(
+          translate(language, "toastErrorTitle"),
+          requestError.message,
+          "error",
+        );
+      }
       if (requestError.status === 401 || requestError.status === 503) await loadStatus({ quiet: true });
     } finally {
       if (actionControllerRef.current === controller) {
@@ -237,14 +279,23 @@ export function M365MailboxPanel({
     setAutoSync(false);
     persistAutoSync(role, false);
     setAction("disconnect");
-    setError("");
     try {
       await dashboardApi.disconnectM365(role, controller.signal);
-      setSyncResult(null);
       setFolders([]);
       await loadStatus({ quiet: true });
+      pushToast(
+        translate(language, "toastSuccessTitle"),
+        translate(language, "m365DisconnectedNotice"),
+        "success",
+      );
     } catch (requestError) {
-      if (requestError.name !== "AbortError") setError(requestError.message);
+      if (requestError.name !== "AbortError") {
+        pushToast(
+          translate(language, "toastErrorTitle"),
+          requestError.message,
+          "error",
+        );
+      }
       if (requestError.status === 401 || requestError.status === 503) await loadStatus({ quiet: true });
     } finally {
       if (actionControllerRef.current === controller) {
@@ -260,8 +311,6 @@ export function M365MailboxPanel({
     actionControllerRef.current?.abort();
     actionControllerRef.current = controller;
     setAction("folder");
-    setError("");
-    setSyncResult(null);
     try {
       const result = await dashboardApi.selectM365Folder(role, folderId, controller.signal);
       if (controller.signal.aborted) return;
@@ -270,8 +319,19 @@ export function M365MailboxPanel({
         selected_folder: result.selected_folder,
         cursor_ready: false,
       });
+      pushToast(
+        translate(language, "toastSuccessTitle"),
+        translate(language, "m365FolderSavedNotice"),
+        "success",
+      );
     } catch (requestError) {
-      if (requestError.name !== "AbortError") setError(requestError.message);
+      if (requestError.name !== "AbortError") {
+        pushToast(
+          translate(language, "toastErrorTitle"),
+          requestError.message,
+          "error",
+        );
+      }
       if (requestError.status === 401 || requestError.status === 503) await loadStatus({ quiet: true });
     } finally {
       if (actionControllerRef.current === controller) {
@@ -396,21 +456,6 @@ export function M365MailboxPanel({
       )}
 
       {loading && <div className="upload-progress" role="status"><span>{translate(language, "m365Loading")}</span><progress /></div>}
-      {error && <div className="inline-error" role="alert">{error}</div>}
-      {syncResult && (
-        <div className="upload-result m365-sync-result" role="status">
-          <strong>{translate(language, "m365SyncComplete")}</strong>
-          <div className="m365-sync-summary">
-            <span>{translate(language, "m365Fetched")}: <strong>{syncResult.fetched_count}</strong></span>
-            <span>{translate(language, "m365Ingested")}: <strong>{syncResult.ingested}</strong></span>
-            <span>{translate(language, "m365Cases")}: <strong>{syncResult.case_ids.length}</strong></span>
-          </div>
-          {!!syncResult.warnings.length && <span>{translate(language, "uploadWarnings")}: {syncResult.warnings.join(" · ")}</span>}
-          {!!syncResult.skipped_files.length && <span>{translate(language, "emailSkipped")}: {syncResult.skipped_files.length}</span>}
-          {!!syncResult.unknown_files.length && <span>{translate(language, "emailRejected")}: {syncResult.unknown_files.length}</span>}
-          {syncResult.has_more && <span className="m365-more-warning">{translate(language, "m365HasMore")}</span>}
-        </div>
-      )}
     </section>
   );
 }

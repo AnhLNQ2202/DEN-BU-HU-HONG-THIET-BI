@@ -2336,6 +2336,7 @@ label.small {
   display: grid;
   width: min(390px, calc(100vw - 40px));
   gap: 9px;
+  pointer-events: none;
 }
 
 .toast {
@@ -2349,6 +2350,8 @@ label.small {
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 8px 28px rgba(41, 40, 42, 0.16);
+  overflow-wrap: anywhere;
+  pointer-events: auto;
 }
 
 .toast--success {

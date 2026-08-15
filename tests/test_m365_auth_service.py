@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -51,7 +52,9 @@ class _FakeMsal:
                 token_cache: _Cache,
             ) -> None:
                 assert client_id == "11111111-1111-1111-1111-111111111111"
-                assert authority.endswith("/22222222-2222-2222-2222-222222222222")
+                assert authority.endswith(
+                    ("/22222222-2222-2222-2222-222222222222", "/consumers")
+                )
                 assert client_credential == "synthetic-secret"
                 self.cache = token_cache
 
@@ -113,15 +116,34 @@ class _FakeMsal:
         self.ConfidentialClientApplication = ConfidentialClientApplication
 
 
-def _config(*, secure: bool = True) -> M365OAuthConfig:
+def _config(*, secure: bool = True, personal: bool = False) -> M365OAuthConfig:
     scheme = "https" if secure else "http"
     host = "example.test" if secure else "127.0.0.1:5000"
     return M365OAuthConfig(
-        tenant_id="22222222-2222-2222-2222-222222222222",
+        tenant_id="consumers" if personal else "22222222-2222-2222-2222-222222222222",
         client_id="11111111-1111-1111-1111-111111111111",
         client_secret="synthetic-secret",
         redirect_uri=f"{scheme}://{host}/api/m365/callback",
     )
+
+
+def test_personal_outlook_consumers_authority_is_supported_but_broad_authorities_are_not() -> None:
+    base = {
+        "m365_client_id": "11111111-1111-1111-1111-111111111111",
+        "m365_client_secret": "synthetic-secret",
+        "m365_redirect_uri": "https://example.test/api/m365/callback",
+    }
+
+    personal = M365OAuthConfig.from_settings(
+        SimpleNamespace(m365_tenant_id="consumers", **base)
+    )
+    assert personal is not None
+    assert personal.authority == "https://login.microsoftonline.com/consumers"
+
+    for audience in ("common", "organizations"):
+        assert M365OAuthConfig.from_settings(
+            SimpleNamespace(m365_tenant_id=audience, **base)
+        ) is None
 
 
 def _state(authorization_url: str) -> str:
@@ -161,6 +183,24 @@ def test_roles_use_least_privilege_and_separate_token_caches() -> None:
     connected = [cache for cache in fake.caches if cache.account is not None]
     assert len(connected) == 2
     assert connected[0] is not connected[1]
+
+
+def test_personal_forwarding_inbox_keeps_role_scoped_least_privilege() -> None:
+    fake = _FakeMsal()
+    service = M365ConnectionService(_config(personal=True), msal_module=fake)
+
+    ngan = service.start_authorization(None, "ngan")
+    tran = service.start_authorization(ngan.session_id, "tran")
+
+    assert service.required_scope("ngan") == "Mail.Read"
+    assert service.required_scope("tran") == "Mail.ReadWrite"
+    assert service.outlook_drafts_supported is True
+    assert service.personal_forwarding_inbox is True
+    assert fake.requested_scopes == [
+        ("https://graph.microsoft.com/Mail.Read",),
+        ("https://graph.microsoft.com/Mail.ReadWrite",),
+    ]
+    assert service.status(tran.session_id, "tran")["required_scope"] == "Mail.ReadWrite"
 
 
 def test_oauth_state_is_one_time_short_lived_and_return_path_is_same_origin() -> None:

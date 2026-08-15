@@ -1,14 +1,18 @@
 # Microsoft 365 mailbox integration
 
-This optional staging integration lets two operators connect different Microsoft 365
-mailboxes, manually import new mail from one selected folder, and create a TranNNB
-Reply-All draft directly in Outlook. It never sends mail.
+This optional staging integration lets the two roles connect either separate company
+mailboxes or one shared personal forwarding inbox, import new mail from one selected
+folder per role, and create TranNNB outputs without ever sending mail.
 
 ## Safety contract
 
-- `ngan` requests delegated `Mail.Read` only.
-- `tran` requests delegated `Mail.ReadWrite`; this is required by Graph
-  `createReplyAll`. The application never requests `Mail.Send`.
+- A company-tenant deployment requests `Mail.Read` for Ngan and `Mail.ReadWrite` for
+  Tran; the latter is used only for Graph `createReplyAll`.
+- A personal forwarding inbox (`consumers`) also requests `Mail.Read` for Ngan and
+  `Mail.ReadWrite` for Tran. Tran uses write access only to create a standalone,
+  recipient-free, unsent draft in the personal mailbox; it cannot join the company
+  thread.
+- The application never requests `Mail.Send`.
 - Each Connect action includes `prompt=select_account`, so Ngan and Tran can choose
   different signed-in accounts.
 - There is no send route and no Graph `/send` call.
@@ -27,13 +31,23 @@ Microsoft references:
 
 - [MSAL Python authorization-code flow](https://learn.microsoft.com/en-us/entra/msal/python/getting-started/acquiring-tokens)
 - [Create a Reply-All draft](https://learn.microsoft.com/en-us/graph/api/message-createreplyall?view=graph-rest-1.0)
+- [Create a standalone message draft](https://learn.microsoft.com/en-us/graph/api/user-post-messages?view=graph-rest-1.0)
 - [Incremental folder message sync](https://learn.microsoft.com/en-us/graph/api/message-delta?view=graph-rest-1.0)
 - [Get raw MIME content](https://learn.microsoft.com/en-us/graph/outlook-get-mime-message)
 
 ## Entra app registration
 
-Use a tenant-specific confidential web application. Do not use `common`,
-`organizations`, or `consumers` as the tenant.
+Use a confidential web application with one explicit audience:
+
+- a tenant GUID/domain for one company tenant; or
+- `consumers` for a dedicated personal Outlook.com/Hotmail mailbox.
+
+The product deliberately rejects `common` and `organizations` so a deployment
+cannot silently expand from one intended mailbox audience to every Microsoft
+organization. The Entra app's **Supported account types** must match the configured
+authority. For `consumers`, choose personal Microsoft accounts (or the Microsoft
+option that includes personal accounts) and connect only the dedicated forwarding
+mailbox.
 
 1. In Microsoft Entra admin center, create or select an App registration.
 2. Under **Authentication**, add the **Web** redirect URI exactly as deployed:
@@ -41,19 +55,19 @@ Use a tenant-specific confidential web application. Do not use `common`,
 3. Under **Certificates & secrets**, create a client secret and copy its value into the
    deployment secret store. Do not commit it.
 4. Under **API permissions > Microsoft Graph > Delegated permissions**, add:
-   - `Mail.Read`
-   - `Mail.ReadWrite`
+   - company tenant mode: `Mail.Read` and `Mail.ReadWrite`;
+   - personal forwarding mode: `Mail.Read` and `Mail.ReadWrite`.
 5. Do not add `Mail.Send`.
 6. Grant user/admin consent according to the tenant's policy.
 
-The application requests the smaller scope for each role at connection time. The
-presence of `Mail.ReadWrite` in the app registration does not make the Ngan token a
-write token; Ngan's authorization request is explicitly `Mail.Read`.
+The application requests the smaller scope for each role at connection time. Ngan is
+read-only. Tran can create or delete only the temporary unsent draft needed by this
+workflow; the product has no send operation.
 
 ## Environment
 
-All four settings are required. Missing, partial, malformed, or non-tenant-specific
-configuration fails closed and reports the capability as unavailable.
+All four settings are required. Missing, partial, or malformed configuration fails
+closed and reports the capability as unavailable.
 
 ```dotenv
 ASSET_HUB_M365_TENANT_ID=22222222-2222-2222-2222-222222222222
@@ -62,16 +76,26 @@ ASSET_HUB_M365_CLIENT_SECRET=<secret-value>
 ASSET_HUB_M365_REDIRECT_URI=https://<render-service>.onrender.com/api/m365/callback
 ```
 
+For the personal forwarding-inbox workflow, use:
+
+```dotenv
+ASSET_HUB_M365_TENANT_ID=consumers
+```
+
+The user still signs in and grants the delegated permission. The product does not
+obtain mailbox access merely because this value is set.
+
 For local development only, the callback may use HTTP on loopback:
 
 ```dotenv
 ASSET_HUB_M365_REDIRECT_URI=http://127.0.0.1:5000/api/m365/callback
 ```
 
-`ASSET_HUB_RETAIN_RAW_EML=true` is required to create Outlook drafts because the
-exact source `Message-ID` must be read from the retained EML. Sync itself can ingest
-without retention, but source download, mail PDF, local draft, and Outlook draft will
-then be unavailable.
+`ASSET_HUB_RETAIN_RAW_EML=true` is required to create Outlook drafts. Company-tenant
+Reply-All reads the exact source `Message-ID`; personal forwarding mode uses the
+retained inner EML for source binding and its standalone draft subject. Sync itself
+can ingest without retention, but source download, mail PDF, local draft, and Outlook
+draft will then be unavailable.
 
 On Render, set tenant ID, client ID, and client secret as secret environment values.
 The staging blueprint already declares the callback variable. Its value must exactly
@@ -88,7 +112,23 @@ For each role independently:
 4. Select exactly one folder.
 5. Select **Sync now** when new mail should be imported.
 
-Tran can then resolve assets and choose **Create Outlook draft**. The backend:
+For a personal forwarding inbox, create two folders such as `Ngan` and `Tran`. Route
+each approved company notice into the matching folder, connect the **same personal
+account** once under each Product role, then select the matching folder. Forwarding the
+original message **as an attachment** is supported: Product unwraps exactly one
+attached `.eml`, validates it with the existing safe EML contract, and stores/parses
+that inner original message. Multiple attached messages or any additional real
+attachment fail closed. The product never gains access to the company mailbox.
+
+Because the personal copy is not the original company conversation, Product does not
+call Graph Reply-All in this mode. Tran instead creates a **new standalone unsent
+draft** in the personal Outlook mailbox, with no recipients, containing the approved
+intro/table and workbook. The returned Outlook link opens that draft so the operator
+can copy its content back to the original company mail. It is not the original thread.
+Local Bridge remains the option that can open the exact original Reply-All window.
+
+In company-tenant mode, Tran can resolve assets and choose **Create Outlook draft**.
+The backend:
 
 1. Reads the single exact `Message-ID` from the retained source EML.
 2. Looks up exactly one matching mailbox message.
@@ -100,6 +140,10 @@ Tran can then resolve assets and choose **Create Outlook draft**. The backend:
 
 If body update or attachment fails after draft creation, the server tries to delete
 the temporary draft. The API reports explicitly when that rollback is uncertain.
+
+Personal forwarding mode uses `POST /me/messages` instead of `createReplyAll`, omits
+all recipients, attaches the same workbook, returns the validated Outlook link, and
+uses the same rollback/no-send boundary.
 
 ## Manual sync limits
 
@@ -124,7 +168,8 @@ closed, or the role disconnects.
 - raw MIME above 2 MiB is skipped with a count-only warning and the cursor can still
   advance; transport/provider failures still abort without committing the cursor;
 - malformed/unsupported MIME is also skipped per message after the existing safe EML
-  validator runs, so one bad mailbox item cannot poison later syncs;
+  validator runs; the only wrapper exception is exactly one attached `.eml`, whose
+  inner message must itself pass the normal no-attachment validator;
 - `has_more=true` means the operator should click Sync again.
 
 Selecting another folder resets that role's cursor. Disconnecting one role clears only
@@ -151,7 +196,7 @@ GET /api/m365/{role}/status
   "ok": true,
   "configured": true,
   "role": "tran",
-  "required_scope": "Mail.ReadWrite",
+  "required_scope": "Mail.Read",
   "connected": true,
   "account": {"display_name": "Tran User", "email": "tran@example.com"},
   "selected_folder": {

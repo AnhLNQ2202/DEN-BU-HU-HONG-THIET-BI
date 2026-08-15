@@ -26,6 +26,9 @@ services:
         value: operator@example.invalid
       # Optional role-scoped Microsoft 365 connection. Set all three secret
       # values in Render before enabling; otherwise the feature fails closed.
+      # Tenant may be an exact company tenant or "consumers" for one personal
+      # forwarding inbox shared by the Ngan and Tran role folders. Leave all
+      # four M365 values unset until an App Registration is approved.
       - key: ASSET_HUB_M365_TENANT_ID
         sync: false
       - key: ASSET_HUB_M365_CLIENT_ID

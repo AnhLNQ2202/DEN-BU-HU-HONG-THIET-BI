@@ -303,6 +303,43 @@ def test_reply_all_patch_attachment_and_rollback_operations_are_exact(
     assert attachment["isInline"] is False
 
 
+def test_standalone_message_draft_has_no_recipient_and_no_send_operation() -> None:
+    client, session = _client(_Response(201, _draft("standalone-draft")))
+
+    created = client.create_message_draft(
+        "DRAFT - Re: synthetic",
+        "<p>Approved copy-only body</p>",
+    )
+
+    assert created.id == "standalone-draft"
+    method, url, options = session.calls[0]
+    assert method == "POST"
+    assert url == "https://graph.microsoft.com/v1.0/me/messages"
+    assert options["json"] == {
+        "subject": "DRAFT - Re: synthetic",
+        "body": {"contentType": "HTML", "content": "<p>Approved copy-only body</p>"},
+    }
+    assert "toRecipients" not in options["json"]
+
+
+def test_invalid_standalone_create_response_preserves_safe_id_for_rollback() -> None:
+    client, _ = _client(
+        _Response(
+            201,
+            {
+                "id": "created-draft",
+                "isDraft": False,
+                "body": {"contentType": "HTML", "content": "invalid"},
+            },
+        )
+    )
+
+    with pytest.raises(M365GraphDraftUncertain) as captured:
+        client.create_message_draft("DRAFT - Re: synthetic", "<p>approved</p>")
+
+    assert captured.value.draft_id == "created-draft"
+
+
 def test_invalid_create_reply_response_preserves_safe_draft_id_for_rollback() -> None:
     client, _ = _client(
         _Response(
