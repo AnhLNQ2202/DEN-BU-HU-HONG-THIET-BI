@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { translate } from "../i18n.js";
 import { numberFormatter } from "../utils.js";
+import { classifySupplierFiles, hasExactSupplierRoles } from "../workflowContracts.js";
 
 const MIB = 1024 * 1024;
 const SUPPLIER_EXTENSIONS = new Set([".xls", ".xlsx", ".csv"]);
@@ -43,16 +44,6 @@ function countFrom(result, key, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function sameFile(first, second) {
-  return Boolean(
-    first
-      && second
-      && first.name === second.name
-      && first.size === second.size
-      && first.lastModified === second.lastModified,
-  );
-}
-
 function supplierFileError(file, role, language) {
   if (!file) return "";
   if (!SUPPLIER_EXTENSIONS.has(extensionOf(file))) {
@@ -62,6 +53,26 @@ function supplierFileError(file, role, language) {
   if (file.size > SUPPLIER_MAX_FILE_SIZE) {
     return `${role}: ${translate(language, "supplierFileTooLarge")}`;
   }
+  return "";
+}
+
+function supplierSelectionError(files, classification, language) {
+  if (!files.length) return "";
+  if (files.length !== 2) {
+    return `${translate(language, "supplierExactlyTwo")} (${numberFormatter.format(files.length)})`;
+  }
+  if (classification.unknown.length) {
+    return translate(language, "supplierUnknownFilename");
+  }
+  if (classification.active.length !== 1 || classification.inactive.length !== 1) {
+    return translate(language, "supplierRoleMismatch");
+  }
+  const signatures = new Set(files.map(
+    (file) => `${file.name}\u0000${file.size}\u0000${file.lastModified}`,
+  ));
+  if (signatures.size !== files.length) return translate(language, "supplierSameFile");
+  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+  if (totalSize > SUPPLIER_MAX_TOTAL_SIZE) return translate(language, "supplierTotalTooLarge");
   return "";
 }
 
@@ -101,12 +112,34 @@ function UploadProgress({ language, percent, kind }) {
   );
 }
 
-function WarningList({ className = "", heading, items }) {
+function DisclosureList({ className = "", heading, items, language }) {
   if (!items.length) return null;
   return (
-    <div className={`upload-feedback-list ${className}`.trim()}>
-      <strong>{heading}</strong>
+    <details className={`upload-feedback-list upload-details ${className}`.trim()}>
+      <summary>
+        <span>{heading}</span>
+        <strong>{numberFormatter.format(items.length)} · {translate(language, "uploadViewDetails")}</strong>
+      </summary>
       <ul>{items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul>
+    </details>
+  );
+}
+
+function SelectedFilesDisclosure({ files, language }) {
+  if (!files.length) return null;
+  return (
+    <div className="selected-upload-files" role="status">
+      <strong>{numberFormatter.format(files.length)} {translate(language, "emailFilesSelected")}</strong>
+      <details className="upload-details">
+        <summary>{translate(language, "uploadViewDetails")}</summary>
+        <ul>
+          {files.map((file) => (
+            <li key={`${file.name}-${file.size}-${file.lastModified}`}>
+              <span>{file.name}</span><small>{formatSize(file.size)}</small>
+            </li>
+          ))}
+        </ul>
+      </details>
     </div>
   );
 }
@@ -135,9 +168,13 @@ function SupplierResult({ language, result }) {
     <div className="upload-result" role="status" aria-live="polite">
       <strong>{result.message || translate(language, "supplierUploadSuccess")}</strong>
       {result.uploadedFileNames && (
-        <span className="upload-result__files">
-          {result.uploadedFileNames.active} · {result.uploadedFileNames.inactive}
-        </span>
+        <details className="upload-details upload-result__files">
+          <summary>{translate(language, "uploadViewFileNames")}</summary>
+          <ul>
+            <li>{translate(language, "supplierActiveFile")}: {result.uploadedFileNames.active}</li>
+            <li>{translate(language, "supplierInactiveFile")}: {result.uploadedFileNames.inactive}</li>
+          </ul>
+        </details>
       )}
       <dl className="upload-summary">
         <div><dt>{translate(language, "supplierActiveRows")}</dt><dd>{numberFormatter.format(countFrom(result, "active_count"))}</dd></div>
@@ -145,15 +182,17 @@ function SupplierResult({ language, result }) {
         <div><dt>{translate(language, "supplierTotalRows")}</dt><dd>{numberFormatter.format(countFrom(result, "total_count"))}</dd></div>
         <div className={collisionCount ? "has-warning" : ""}><dt>{translate(language, "supplierCollisions")}</dt><dd>{numberFormatter.format(collisionCount)}</dd></div>
       </dl>
-      <WarningList
+      <DisclosureList
         className="is-warning"
         heading={translate(language, "supplierCollisionDetails")}
         items={collisionMessages}
+        language={language}
       />
-      <WarningList
+      <DisclosureList
         className="is-warning"
         heading={translate(language, "uploadWarnings")}
         items={warnings}
+        language={language}
       />
     </div>
   );
@@ -175,24 +214,31 @@ export function EmailResult({ language, result }) {
         <div className={unknownFiles.length ? "has-warning" : ""}><dt>{translate(language, "emailRejected")}</dt><dd>{numberFormatter.format(unknownFiles.length)}</dd></div>
       </dl>
       {!!caseIds.length && (
-        <div className="upload-case-ids">
-          <strong>{translate(language, "emailCreatedCases")}</strong> {caseIds.join(", ")}
-        </div>
+        <details className="upload-details upload-case-ids">
+          <summary>
+            <span>{translate(language, "emailCreatedCases")} {numberFormatter.format(caseIds.length)}</span>
+            <strong>{translate(language, "uploadViewDetails")}</strong>
+          </summary>
+          <ul>{caseIds.map((caseId) => <li key={caseId}>{caseId}</li>)}</ul>
+        </details>
       )}
-      <WarningList
+      <DisclosureList
         className="is-warning"
         heading={translate(language, "uploadWarnings")}
         items={warnings}
+        language={language}
       />
-      <WarningList
+      <DisclosureList
         className="is-warning"
         heading={translate(language, "emailSkippedFiles")}
         items={skippedFiles}
+        language={language}
       />
-      <WarningList
+      <DisclosureList
         className="is-error"
         heading={translate(language, "emailRejectedFiles")}
         items={unknownFiles}
+        language={language}
       />
     </div>
   );
@@ -326,10 +372,7 @@ export function EmailUploadPanel({
         </div>
         <p id={hintId} className="upload-hint">{translate(language, "emailFileTypes")}</p>
         {!!emailFiles.length && !selectedEmailError && (
-          <div className="selected-upload-files">
-            <strong>{numberFormatter.format(emailFiles.length)} {translate(language, "emailFilesSelected")}</strong>
-            <span>{emailFiles.slice(0, 4).map((file) => file.name).join(", ")}{emailFiles.length > 4 ? ` +${emailFiles.length - 4}` : ""}</span>
-          </div>
+          <SelectedFilesDisclosure files={emailFiles} language={language} />
         )}
         {selectedEmailError && <div id={errorId} className="inline-error" role="alert">{selectedEmailError}</div>}
         {emailError && <div className="inline-error" role="alert">{emailError}</div>}
@@ -352,8 +395,7 @@ export function UploadWorkspace({
   testDataClearVersion,
 }) {
   const [confirmed, setConfirmed] = useState(false);
-  const [activeFile, setActiveFile] = useState(null);
-  const [inactiveFile, setInactiveFile] = useState(null);
+  const [supplierFiles, setSupplierFiles] = useState([]);
   const [supplierBusy, setSupplierBusy] = useState(false);
   const [supplierProgress, setSupplierProgress] = useState(null);
   const [supplierError, setSupplierError] = useState("");
@@ -363,8 +405,7 @@ export function UploadWorkspace({
   const [emailProgress, setEmailProgress] = useState(null);
   const [emailError, setEmailError] = useState("");
   const [emailResult, setEmailResult] = useState(null);
-  const activeInputRef = useRef(null);
-  const inactiveInputRef = useRef(null);
+  const supplierInputRef = useRef(null);
   const emailInputRef = useRef(null);
   const supplierAbortRef = useRef(null);
   const emailAbortRef = useRef(null);
@@ -377,8 +418,7 @@ export function UploadWorkspace({
   useEffect(() => {
     if (testDataClearVersion < 1) return;
     setConfirmed(false);
-    setActiveFile(null);
-    setInactiveFile(null);
+    setSupplierFiles([]);
     setSupplierProgress(null);
     setSupplierError("");
     setSupplierResult(null);
@@ -386,27 +426,32 @@ export function UploadWorkspace({
     setEmailProgress(null);
     setEmailError("");
     setEmailResult(null);
-    if (activeInputRef.current) activeInputRef.current.value = "";
-    if (inactiveInputRef.current) inactiveInputRef.current.value = "";
+    if (supplierInputRef.current) supplierInputRef.current.value = "";
     if (emailInputRef.current) emailInputRef.current.value = "";
   }, [testDataClearVersion]);
 
-  const activeError = supplierFileError(
-    activeFile,
-    translate(language, "supplierActiveFile"),
-    language,
+  const supplierClassification = useMemo(
+    () => classifySupplierFiles(supplierFiles),
+    [supplierFiles],
   );
-  const inactiveError = supplierFileError(
-    inactiveFile,
-    translate(language, "supplierInactiveFile"),
-    language,
-  );
-  const supplierPairError = useMemo(() => {
-    if (sameFile(activeFile, inactiveFile)) return translate(language, "supplierSameFile");
-    const totalSize = (activeFile?.size || 0) + (inactiveFile?.size || 0);
-    if (totalSize > SUPPLIER_MAX_TOTAL_SIZE) return translate(language, "supplierTotalTooLarge");
+  const activeFile = supplierClassification.active.length === 1
+    ? supplierClassification.active[0]
+    : null;
+  const inactiveFile = supplierClassification.inactive.length === 1
+    ? supplierClassification.inactive[0]
+    : null;
+  const supplierRolesReady = hasExactSupplierRoles(supplierFiles, supplierClassification);
+  const supplierFileValidation = useMemo(() => {
+    for (const file of supplierFiles) {
+      const error = supplierFileError(file, file.name, language);
+      if (error) return error;
+    }
     return "";
-  }, [activeFile, inactiveFile, language]);
+  }, [language, supplierFiles]);
+  const supplierPairError = useMemo(
+    () => supplierSelectionError(supplierFiles, supplierClassification, language),
+    [language, supplierClassification, supplierFiles],
+  );
   const selectedEmailError = useMemo(
     () => emailFilesError(emailFiles, language),
     [emailFiles, language],
@@ -417,9 +462,9 @@ export function UploadWorkspace({
     confirmed
       && activeFile
       && inactiveFile
-      && !activeError
-      && !inactiveError
+      && supplierRolesReady
       && !supplierPairError
+      && !supplierFileValidation
       && !supplierBusy
       && !emailBusy
       && !dataActionBusy,
@@ -433,10 +478,8 @@ export function UploadWorkspace({
       && !dataActionBusy,
   );
 
-  function selectSupplierFile(role, event) {
-    const file = event.target.files?.[0] || null;
-    if (role === "active") setActiveFile(file);
-    else setInactiveFile(file);
+  function selectSupplierFiles(event) {
+    setSupplierFiles(Array.from(event.target.files || []));
     setSupplierError("");
     setSupplierResult(null);
   }
@@ -449,9 +492,8 @@ export function UploadWorkspace({
 
   async function uploadSuppliers(event) {
     event.preventDefault();
-    const validationError = activeError
-      || inactiveError
-      || supplierPairError
+    const validationError = supplierPairError
+      || supplierFileValidation
       || (!activeFile ? translate(language, "supplierMissingActive") : "")
       || (!inactiveFile ? translate(language, "supplierMissingInactive") : "")
       || (!confirmed ? translate(language, "uploadConfirmationRequired") : "");
@@ -477,10 +519,8 @@ export function UploadWorkspace({
         ...result,
         uploadedFileNames: { active: activeFile.name, inactive: inactiveFile.name },
       });
-      setActiveFile(null);
-      setInactiveFile(null);
-      if (activeInputRef.current) activeInputRef.current.value = "";
-      if (inactiveInputRef.current) inactiveInputRef.current.value = "";
+      setSupplierFiles([]);
+      if (supplierInputRef.current) supplierInputRef.current.value = "";
     } catch (error) {
       setSupplierError(
         error.name === "AbortError" ? translate(language, "uploadCancelled") : error.message,
@@ -550,42 +590,57 @@ export function UploadWorkspace({
       </label>
 
       <form className="upload-form" onSubmit={uploadSuppliers} noValidate>
-        <div className="supplier-file-grid">
-          <label className="upload-file-field" htmlFor="supplier-active-file">
-            <span>{translate(language, "supplierActiveFile")}</span>
-            <input
-              ref={activeInputRef}
-              id="supplier-active-file"
-              type="file"
-              accept=".xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
-              required
-              disabled={supplierBusy || emailBusy || dataActionBusy}
-              aria-describedby="supplier-file-hint supplier-active-error"
-              aria-invalid={Boolean(activeError)}
-              onChange={(event) => selectSupplierFile("active", event)}
-            />
-            {activeFile && !activeError && <small>{activeFile.name} · {formatSize(activeFile.size)}</small>}
-            {activeError && <small id="supplier-active-error" className="field-error">{activeError}</small>}
-          </label>
-          <label className="upload-file-field" htmlFor="supplier-inactive-file">
-            <span>{translate(language, "supplierInactiveFile")}</span>
-            <input
-              ref={inactiveInputRef}
-              id="supplier-inactive-file"
-              type="file"
-              accept=".xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
-              required
-              disabled={supplierBusy || emailBusy || dataActionBusy}
-              aria-describedby="supplier-file-hint supplier-inactive-error"
-              aria-invalid={Boolean(inactiveError)}
-              onChange={(event) => selectSupplierFile("inactive", event)}
-            />
-            {inactiveFile && !inactiveError && <small>{inactiveFile.name} · {formatSize(inactiveFile.size)}</small>}
-            {inactiveError && <small id="supplier-inactive-error" className="field-error">{inactiveError}</small>}
-          </label>
-        </div>
-        <p id="supplier-file-hint" className="upload-hint">{translate(language, "supplierFileTypes")}</p>
-        {supplierPairError && <div className="inline-error" role="alert">{supplierPairError}</div>}
+        <label className="upload-file-field supplier-file-picker" htmlFor="supplier-files">
+          <span>{translate(language, "supplierLabel")}</span>
+          <input
+            ref={supplierInputRef}
+            id="supplier-files"
+            type="file"
+            multiple
+            accept=".xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+            required
+            disabled={supplierBusy || emailBusy || dataActionBusy}
+            aria-describedby="supplier-file-hint supplier-file-error"
+            aria-invalid={Boolean(supplierPairError || supplierFileValidation)}
+            onChange={selectSupplierFiles}
+          />
+        </label>
+        <p id="supplier-file-hint" className="upload-hint">{translate(language, "supplierFileTypes")} {translate(language, "supplierFilenameRule")}</p>
+        {!!supplierFiles.length && (
+          <div className="supplier-detection" role="status" aria-live="polite">
+            <div className={activeFile ? "is-ready" : "is-missing"}>
+              <span>{translate(language, "supplierActiveFile")}</span>
+              <strong>{activeFile
+                ? translate(language, "supplierDetected")
+                : supplierClassification.active.length > 1
+                  ? `${numberFormatter.format(supplierClassification.active.length)} · ${translate(language, "supplierAmbiguous")}`
+                  : translate(language, "supplierNotDetected")}</strong>
+            </div>
+            <div className={inactiveFile ? "is-ready" : "is-missing"}>
+              <span>{translate(language, "supplierInactiveFile")}</span>
+              <strong>{inactiveFile
+                ? translate(language, "supplierDetected")
+                : supplierClassification.inactive.length > 1
+                  ? `${numberFormatter.format(supplierClassification.inactive.length)} · ${translate(language, "supplierAmbiguous")}`
+                  : translate(language, "supplierNotDetected")}</strong>
+            </div>
+            <details className="upload-details supplier-selection-details">
+              <summary>{numberFormatter.format(supplierFiles.length)} · {translate(language, "uploadViewDetails")}</summary>
+              <ul>
+                {supplierFiles.map((file) => (
+                  <li key={`${file.name}-${file.size}-${file.lastModified}`}>
+                    <span>{file.name}</span><small>{formatSize(file.size)}</small>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </div>
+        )}
+        {(supplierPairError || supplierFileValidation) && (
+          <div id="supplier-file-error" className="inline-error" role="alert">
+            {supplierPairError || supplierFileValidation}
+          </div>
+        )}
         {supplierError && <div className="inline-error" role="alert">{supplierError}</div>}
         {supplierBusy && <UploadProgress language={language} percent={supplierProgress} kind="supplier" />}
         <div className="upload-actions">
@@ -651,10 +706,7 @@ export function UploadWorkspace({
         </div>
         <p id="email-file-hint" className="upload-hint">{translate(language, "emailFileTypes")}</p>
         {!!emailFiles.length && !selectedEmailError && (
-          <div className="selected-upload-files">
-            <strong>{numberFormatter.format(emailFiles.length)} {translate(language, "emailFilesSelected")}</strong>
-            <span>{emailFiles.slice(0, 4).map((file) => file.name).join(", ")}{emailFiles.length > 4 ? ` +${emailFiles.length - 4}` : ""}</span>
-          </div>
+          <SelectedFilesDisclosure files={emailFiles} language={language} />
         )}
         {selectedEmailError && <div id="email-file-error" className="inline-error" role="alert">{selectedEmailError}</div>}
         {emailError && <div className="inline-error" role="alert">{emailError}</div>}

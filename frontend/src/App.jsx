@@ -9,6 +9,7 @@ import { Topbar } from "./components/Header.jsx";
 import { IconSprite } from "./components/Icon.jsx";
 import { KpiGrid } from "./components/KpiGrid.jsx";
 import { NganWorkspace, TranWorkspace } from "./components/TaskWorkspace.jsx";
+import { OutlookConnectionsDialog } from "./components/OutlookConnectionsDialog.jsx";
 import { statusLabel, translate } from "./i18n.js";
 import { filterAndSortCases, numberFormatter, toNumber } from "./utils.js";
 
@@ -68,6 +69,9 @@ export default function App() {
   });
   const [activeCaseId, setActiveCaseId] = useState(null);
   const [batchOpen, setBatchOpen] = useState(false);
+  const [outlookConnectionsOpen, setOutlookConnectionsOpen] = useState(false);
+  const [tranOutlookConnected, setTranOutlookConnected] = useState(false);
+  const [tranOutlookRefreshVersion, setTranOutlookRefreshVersion] = useState(0);
   const [batchCases, setBatchCases] = useState([]);
   const [initialBatchName, setInitialBatchName] = useState("");
   const [initialInvoiceStart, setInitialInvoiceStart] = useState(1);
@@ -319,7 +323,12 @@ export default function App() {
   return (
     <>
       <a className="skip-link" href="#main-content">{translate(language, "overview")}</a>
-      <Topbar language={language} onLanguageChange={setLanguage} />
+      <Topbar
+        language={language}
+        onLanguageChange={setLanguage}
+        onOpenOutlook={() => setOutlookConnectionsOpen(true)}
+        outlookOpen={outlookConnectionsOpen}
+      />
       <div className="meta meta-line" role="status">
         {translate(language, "updatedPrefix")} {updatedText} {translate(language, "updatedSuffix")}
         <span className={`connection-text connection-${connection}`}>● {connectionText}</span>
@@ -396,7 +405,6 @@ export default function App() {
                 statusBusy={statusBusy}
                 testDataClearVersion={testDataClearVersion}
                 onEmailUpload={uploadEmails}
-                onMailboxSynced={() => loadDashboard({ quiet: true })}
                 onCreateMailPdf={createCaseMailPdf}
                 onClearTestData={clearTestData}
                 onOpenBatch={openBatch}
@@ -413,13 +421,30 @@ export default function App() {
                 language={language}
                 onEmailUpload={uploadEmails}
                 onMailboxSynced={() => loadDashboard({ quiet: true })}
+                onOutlookMailboxInvalid={() => {
+                  setTranOutlookConnected(false);
+                  setTranOutlookRefreshVersion((current) => current + 1);
+                }}
                 onReferencesChanged={() => loadDashboard({ quiet: true })}
+                outlookMailboxConnected={tranOutlookConnected}
                 testDataClearVersion={testDataClearVersion}
               />
             </section>
           </>
         )}
       </main>
+
+      <OutlookConnectionsDialog
+        capabilities={dashboard.capabilities}
+        language={language}
+        onClose={() => setOutlookConnectionsOpen(false)}
+        onMailboxSynced={() => loadDashboard({ quiet: true })}
+        onTranStatusChange={(nextStatus) => setTranOutlookConnected(nextStatus?.connected === true)}
+        open={outlookConnectionsOpen}
+        preferredRole={activeTab === "overview" ? lastTaskTab : activeTab}
+        refreshVersion={testDataClearVersion}
+        tranRefreshVersion={tranOutlookRefreshVersion}
+      />
 
       <CaseDrawer
         caseItem={activeCase}

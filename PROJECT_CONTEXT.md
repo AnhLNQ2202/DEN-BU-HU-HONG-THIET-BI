@@ -47,44 +47,26 @@ flowchart LR
 
 ### Product đang ở đâu
 
-Snapshot này được lập ngày **2026-08-15**:
+Snapshot hiện tại được cập nhật ngày **2026-08-16**:
 
 | Hạng mục | Giá trị tại snapshot |
 | --- | --- |
 | GitHub | `AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI` |
-| Branch tích hợp M365 lịch sử | `agent/react-trannnb-team-dev` |
-| Branch Outlook companion đang hoàn thiện | `feat/outlook-addin-local-bridge` |
-| Commit feature template/Draft Mail | `9e17959c9a1204fa94bf98cf065dc7fd9d1d7d18` |
-| Commit feature M365/Tran performance | `a69978f2ad6db0d399c6ce815449cd54c7502a98` |
-| Commit đã CI và đang live trên Render | `cfa1dd05bf9209939b3dddda5e04efe5e4859253` |
-| `main` tại snapshot | `58794f42955ceb396a254dedac60ceeda3ac1ce1` |
-| PR feature | [PR #5](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/5), đã merge |
-| Draft PR M365/Tran performance | [PR #6](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/6) |
+| Branch candidate hiện tại | `agent/tran-parser-outlook-ui` |
+| Base `origin/main` | `b86e1733823badba502da4bf9ac546d89c34082b` |
+| Outlook companion | PR [#7](https://github.com/AnhLNQ2202/DEN-BU-HU-HONG-THIET-BI/pull/7) đã merge; Add-in/Bridge đã được smoke public assets trên staging |
 | Render staging | <https://asset-compensation-hub-staging.onrender.com> |
 | Render plan | Free, filesystem tạm, một instance |
 | Render auth | Basic Auth; user `judge`, password chỉ xem trong Render Environment |
-| Render deploy quan sát gần nhất | Environment rebuild `cfa1dd0`, trạng thái **live** lúc 2026-08-15 16:00 GMT+7 |
-| Health | `/api/health` trả `200`; `/` không có auth trả `401` |
-| CI current candidate | Hai check `quality` của PR #6 trên `a69978f` đều `SUCCESS` |
-| CI Linux current candidate | 328 test pass trong 27,42 giây, 85% statement coverage; Docker + GreenNode Compose green |
-| QA Windows current candidate | 326 pass, 2 skip theo capability/privilege môi trường; 84% coverage |
-| Frontend current candidate | Vite build ổn định, 48 modules |
-| Release verdict | Đủ điều kiện staging sau UAT; chưa phải production multi-user |
+| Candidate local gate | 372 collected = 370 pass + 2 skip; coverage 82%; Ruff/diff-check pass |
+| Frontend candidate | 3 Node contract tests; Vite 51 modules; two builds byte-for-byte stable |
+| Candidate deploy status | Chưa push/CI/deploy tại thời điểm snapshot này; M365 env vẫn chủ động để trống |
+| Release verdict | Local staging gate xanh; phải chờ GitHub CI Docker rồi mới Manual Deploy; chưa phải production multi-user |
 
-Feature Outlook companion đang được hoàn thiện trên branch
-`feat/outlook-addin-local-bridge`: Office.js Add-in, Classic Outlook Local Bridge,
-pairing API, Tran draft package và hướng dẫn/download ngay trong Product. Tại thời
-điểm viết phần này, feature chưa có final commit/CI/deploy evidence nên **không
-được suy ra là đã live trên Render**. Root agent phải thay ghi chú này bằng exact
-SHA, PR, test gate và deploy status sau khi thật sự hoàn tất; không được bịa số.
-
-> **Release candidate M365/Tran performance đã được push lên branch
-> `agent/react-trannnb-team-dev` tại commit `a69978f`.** Local final gate: Ruff
-> pass; 328 tests collected, 326 pass + 2 expected platform skips; coverage 84%;
-> Vite 48 modules và hai lần build byte-for-byte ổn định. Linux CI của exact
-> feature commit pass 328 tests, 85% coverage, production Docker build và
-> GreenNode Compose validation. Release mới **chưa được deploy Render**; phải hỏi
-> lại user ngay trước redeploy vì `/tmp` staging sẽ mất dữ liệu.
+Candidate hiện tại thêm bảng LOST ban đầu bốn cột, popup Outlook ở header, một
+picker cho cặp Supplier và disclosure cho danh sách upload dài. User đã cho phép
+redeploy disposable staging và chấp nhận mất dữ liệu `/tmp`; quyền này chỉ áp
+dụng staging service nêu trên, không mở rộng sang production hay thay env/plan.
 
 Các giá trị trên là snapshot, không phải chân lý vĩnh viễn. AI mới phải kiểm tra
 lại bằng các lệnh ở mục 2.
@@ -219,7 +201,11 @@ flowchart TD
 
 Thứ tự vận hành:
 
-1. Upload đúng một file Active và một file Inactive.
+1. Trong UI, chọn **cùng lúc đúng hai file** Supplier bằng một file picker. Tên
+   một file phải chứa `Active`, tên file còn lại phải chứa `Inactive`; UI kiểm
+   `Inactive` trước vì chuỗi này chứa `Active`, hiển thị vai trò đã nhận diện và
+   không bao giờ đoán theo thứ tự người dùng chọn. Backend vẫn nhận đúng một file
+   cho mỗi multipart field Active/Inactive.
 2. Upload `.eml`, kết nối account Ngan Microsoft 365 và sync đúng một folder,
    hoặc dùng Add-in/Local Bridge no-Graph. Một EML có thể sinh nhiều case; các
    case cùng email dùng chung opaque
@@ -262,8 +248,9 @@ Chi tiết:
 2. Upload một FA&GL `.xlsx`; CCDC `.xlsx` là optional. Managed upload ưu tiên
    hơn path external cấu hình bằng env.
 3. Resolve từng tài sản. UI chỉ prefill trường thật sự có trong parser metadata;
-   không dùng ngày nhận mail làm ngày mất và không dùng compensation amount làm
-   original cost.
+   ngày mất ghi rõ trong nguồn luôn được giữ, còn khi nguồn không có ngày mất thì
+   UI dùng ngày hiện tại theo rule TranNNB gốc (không dùng RFC `Date` của email
+   làm ngày mất). Không dùng compensation amount làm original cost.
 4. Nếu lookup/classification/cost/date không đủ hoặc conflict, result chưa ready
    và nêu reasons/provenance. User có thể nhập confirmation được rule cho phép.
 5. Khi tất cả ready, xuất workbook mới theo template Tran và rebuild `Sent out`
@@ -551,6 +538,12 @@ hiện có; chưa có automatic TTL deletion.
 - Parser decode subject, chọn bounded plain/HTML, hỗ trợ nhiều DAMAGED record và
   nhiều LOST table row/group theo domain. MOU asset prefix vẫn hợp lệ; chỉ mail
   standalone marker MOU/technical/no-compensation mới bị skip có reason.
+- Với thông báo LOST ban đầu có đúng bảng bốn cột `Tên thiết bị | Mã thiết bị |
+  Tình trạng | Ghi chú`, parser map từng dòng `Thất lạc`/`Mất` thành
+  `metadata.asset_rows`, giữ tên và mã tài sản theo thứ tự. Khi đã nhận diện đúng
+  schema, chỉ một dòng thiếu tên/sai mã/sai trạng thái cũng làm **reject toàn
+  bảng**; không được âm thầm bỏ dòng rồi xử lý thiếu tài sản. Bảng financial đầy
+  đủ vẫn có độ ưu tiên cao hơn bảng thông báo ban đầu.
 - Whole-VND parsing là exact; fractional, malformed hoặc vượt giới hạn bị reject,
   không round.
 - Message-ID được hash; cùng ID nhưng khác content buộc review thay vì overwrite.
@@ -837,24 +830,29 @@ download phải opaque và path phải được resolve dưới managed root.
 
 - `App.jsx`: navigation tab/task, dashboard fetch/refresh, selection, detail,
   batch and test-clear orchestration.
-- `Header.jsx`: branding, language và top-level navigation.
+- `Header.jsx`: branding, nút mở kết nối Outlook, language và top-level navigation.
 - `Sidebar.jsx`: component legacy hiện không được `App.jsx` render; không coi là
   live UI contract nếu chưa được nối lại có chủ đích.
 - `KpiGrid.jsx`: sáu KPI theo baseline.
 - `CaseTable.jsx`: filter, warnings-only option, eligibility-aware selection,
   document actions.
 - `CaseDrawer.jsx`: case fields, parser metadata, source links and audit timeline.
-- `UploadWorkspace.jsx`: Supplier and EML file selection, client-side bounds,
-  XHR progress, cancel, warnings/results, reset nonce.
+- `UploadWorkspace.jsx`: một picker chọn đúng cặp Supplier Active/Inactive bằng
+  filename contract, EML file selection, client-side bounds, XHR progress,
+  cancel, warnings/results và reset nonce. Tên file/case/warning dài nằm trong
+  disclosure đóng mặc định; số lượng và lỗi thao tác chính vẫn luôn nhìn thấy.
 - `TaskWorkspace.jsx`: Ngan controls, accounting export and PDF panel.
 - `TranWorkspace.jsx`: reference status/upload, group theo retained EML, bung
   `asset_rows` thành row-bound multi-asset forms, resolve results và
   workbook/local draft/Outlook draft actions.
 - `M365MailboxPanel.jsx`: reusable Ngan/Tran account status, Connect/Disconnect,
   exact-folder selection, manual sync, 5-minute visible-tab auto-sync opt-in.
-- `OutlookCompanionPanel.jsx`: render trong cả Ngan/Tran workspace; giải thích
-  child-simple “dùng cách này thì chuyện gì xảy ra”, so sánh Add-in/Bridge, link
-  runtime download và tạo code bind đúng role/client.
+- `OutlookCompanionPanel.jsx`: giải thích child-simple “dùng cách này thì chuyện
+  gì xảy ra”, so sánh Add-in/Bridge, link runtime download và tạo code bind đúng
+  role/client.
+- `OutlookConnectionsDialog.jsx`: modal chung mở từ nút `Outlook` cạnh chọn ngôn
+  ngữ; chứa nguyên panel M365 + companion của Ngan/Tran theo role switcher, giữ
+  state/auto-sync khi đóng, hỗ trợ nút X, Escape, backdrop, focus restore và mobile.
 - `MailPdfPanel.jsx`: dedupe artifact handles, select max 20, page/overflow mode,
   individual/batch progress, warnings/downloads.
 - `BatchDialog.jsx`: batch/actor/`invoice_start` input and transition-safe UX.
@@ -865,8 +863,8 @@ State từ upload/reset phải được clear sau successful test reset; cancel/
 không được giả vờ xóa. Tran exact cost được gửi dạng trimmed decimal string để
 không mất precision qua JavaScript `Number`.
 
-Hai `M365MailboxPanel` luôn được mount trong workspace tương ứng và giữ state
-role-scoped. Auto-sync mặc định off; localStorage chỉ lưu boolean opt-in theo
+Hai `M365MailboxPanel` luôn được mount trong modal Outlook chung và giữ state
+role-scoped ngay cả khi modal đóng. Auto-sync mặc định off; localStorage chỉ lưu boolean opt-in theo
 role, không lưu account/token/folder/PII. Interval không chạy khi tab hidden và
 không overlap request. 401/503, disconnect hoặc test reset tắt opt-in. Frontend
 chỉ redirect OAuth tới exact HTTPS `login.microsoftonline.com` và chỉ mở web link
@@ -1481,6 +1479,29 @@ Không ghi “live” cho đến khi có fresh staging data-loss approval và ve
 deploy. Commit tài liệu bàn giao có thể nằm sau implementation commit nêu trên;
 luôn dùng `git rev-parse HEAD` và trạng thái PR/CI hiện tại thay vì giả định SHA
 trong tài liệu là HEAD bất biến.
+
+**Follow-up parser/UI candidate evidence (local, 16/08/2026; trước push/deploy):**
+
+- parser hỗ trợ exact bảng LOST ban đầu bốn cột, giữ multi-asset order/name/tag
+  và fail closed toàn bảng khi có một dòng sai; parser không ghi `loss_date` từ
+  RFC mail date, frontend giữ ngày nguồn hoặc dùng local today theo rule gốc;
+- Outlook controls đã chuyển khỏi hai workspace vào modal chung cạnh language;
+  Supplier UI dùng một picker đúng hai file và filename-based role detection;
+  danh sách file/case/warning dài đóng mặc định;
+- full pytest: 372 collected = 370 passed + 2 expected platform skips; coverage
+  82%; focused parser/upload/Tran/companion/Add-in gate: 64 passed; frontend Node
+  contract: 3 passed; Ruff toàn repo và `git diff --check` pass;
+- Vite 5.4.14 production build pass 51 modules và regenerate tracked dist;
+- NganTLT chỉ được audit bằng **5 EML gốc local**, không có mẫu trong mailbox
+  NganTLT để UAT. Cả 5 đi qua exact Add-in companion upload route, bytes retained
+  khớp input và sinh đúng aggregate 3 DAMAGED + 2 LOST không warning. Đây không
+  phải chứng nhận cho mọi mail Outlook: multipart mail có plain placeholder nhưng
+  dữ liệu DAMAGED chỉ nằm trong HTML vẫn là gap cần regression/fallback riêng;
+  mail có real attachment vẫn bị validator reject theo contract hiện tại.
+- hai run độc lập từng gặp Windows/antivirus `WinError 5` một lần tại atomic
+  `os.replace` của Supplier staging và Tran reference pointer; mỗi exact test pass
+  ngay trên temp mới và fresh full suite pass dưới short `C:\\t` basetemp như số
+  liệu trên. Không che các lần flake môi trường này thành first-run pass.
 
 ### 15.4 Khoảng trống automation hiện tại
 

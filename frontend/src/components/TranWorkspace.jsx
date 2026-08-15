@@ -3,8 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { dashboardApi } from "../api.js";
 import { translate } from "../i18n.js";
 import { formatCurrency } from "../utils.js";
-import { M365MailboxPanel } from "./M365MailboxPanel.jsx";
-import { OutlookCompanionPanel } from "./OutlookCompanionPanel.jsx";
+import { resolveLostDate } from "../workflowContracts.js";
 import { EmailUploadPanel } from "./UploadWorkspace.jsx";
 
 const MAX_REFERENCE_BYTES = 50 * 1024 * 1024;
@@ -92,7 +91,10 @@ function formFromCase(caseItem) {
     tag_number: String(caseItem?.asset_code || "").trim().toUpperCase(),
     asset_name: String(caseItem?.asset_name || "").trim(),
     domain: String(caseItem?.domain || "").trim(),
-    lost_date: inputDate(firstSourceValue(caseItem, ["loss_date", "lost_date"])),
+    lost_date: resolveLostDate(
+      inputDate(firstSourceValue(caseItem, ["loss_date", "lost_date"])),
+      localIsoDate(),
+    ),
     physical: inputBoolean(firstSourceValue(caseItem, ["physical", "is_physical"])),
     confirmed_cost: inputMoney(
       firstSourceValue(caseItem, ["original_value", "original_cost", "cost"]),
@@ -116,7 +118,7 @@ function formFromSourceRow(caseItem, row) {
     tag_number: String(row?.asset_code || base.tag_number).trim().toUpperCase(),
     asset_name: String(row?.asset_name || base.asset_name).trim(),
     domain: String(row?.domain || base.domain).trim(),
-    lost_date: inputDate(row?.loss_date) || base.lost_date,
+    lost_date: resolveLostDate(inputDate(row?.loss_date), base.lost_date),
     confirmed_cost: inputMoney(row?.original_value) || base.confirmed_cost,
     confirmed_start_date: inputDate(row?.usage_start) || base.confirmed_start_date,
   };
@@ -293,7 +295,9 @@ export function TranWorkspace({
   language,
   onEmailUpload,
   onMailboxSynced,
+  onOutlookMailboxInvalid,
   onReferencesChanged,
+  outlookMailboxConnected = false,
   testDataClearVersion,
 }) {
   const [forms, setForms] = useState([{ ...EMPTY_FORM }]);
@@ -317,8 +321,6 @@ export function TranWorkspace({
   const [draftResult, setDraftResult] = useState(null);
   const [outlookDraftResult, setOutlookDraftResult] = useState(null);
   const [companionDraftResult, setCompanionDraftResult] = useState(null);
-  const [outlookMailboxConnected, setOutlookMailboxConnected] = useState(false);
-  const [outlookMailboxRefreshVersion, setOutlookMailboxRefreshVersion] = useState(0);
   const [processingDate, setProcessingDate] = useState(localIsoDate());
   const [yearSheet, setYearSheet] = useState("");
   const [bodyIntro, setBodyIntro] = useState("");
@@ -372,7 +374,6 @@ export function TranWorkspace({
     setDraftResult(null);
     setOutlookDraftResult(null);
     setCompanionDraftResult(null);
-    setOutlookMailboxConnected(false);
     setProcessingDate(localIsoDate());
     setYearSheet("");
     setBodyIntro("");
@@ -650,8 +651,7 @@ export function TranWorkspace({
       if (error.name !== "AbortError") {
         setActionError(error.message);
         if (error.status === 401 || error.status === 503) {
-          setOutlookMailboxConnected(false);
-          setOutlookMailboxRefreshVersion((current) => current + 1);
+          onOutlookMailboxInvalid?.();
           await Promise.resolve(onMailboxSynced?.()).catch(() => {});
         }
       }
@@ -713,22 +713,6 @@ export function TranWorkspace({
         titleKey="tranEmailUploadPanel"
       />
       {emailNotice && <div className="dialog-note" role="status"><p>{emailNotice}</p></div>}
-
-      <M365MailboxPanel
-        capabilities={capabilities}
-        language={language}
-        onStatusChange={(nextStatus) => setOutlookMailboxConnected(nextStatus?.connected === true)}
-        onSynced={onMailboxSynced}
-        refreshVersion={`${testDataClearVersion}:${outlookMailboxRefreshVersion}`}
-        role="tran"
-      />
-
-      <OutlookCompanionPanel
-        capabilities={capabilities}
-        language={language}
-        refreshVersion={testDataClearVersion}
-        role="tran"
-      />
 
       <section className="panel operation-panel">
         <div className="pdf-panel-heading">
